@@ -1,0 +1,115 @@
+"use client";
+
+import { useState } from "react";
+import { apiFetch, ApiError } from "@/lib/api/client";
+import { Label } from "@/components/ui/Label";
+import { Textarea } from "@/components/ui/Textarea";
+import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
+import type { FullVersionConfig } from "@/lib/tools/repository";
+
+type SafetyPolicies = NonNullable<FullVersionConfig["safetyPolicies"]>;
+
+const RISK_LEVELS = ["LOW", "MEDIUM", "HIGH"] as const;
+
+export function SafetySection({ toolId, versionId, initial }: { toolId: string; versionId: string; initial: SafetyPolicies | null }) {
+  const [form, setForm] = useState({
+    riskLevel: (initial?.riskLevel ?? "LOW") as (typeof RISK_LEVELS)[number],
+    inputModeration: initial?.inputModeration ?? true,
+    outputModeration: initial?.outputModeration ?? true,
+    contingencyMessage: initial?.contingencyMessage ?? "",
+    restrictedTopicsText: (initial?.restrictedTopics ?? []).join("\n"),
+  });
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      await apiFetch(`/api/v1/admin/tools/${toolId}/versions/${versionId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          safetyPolicies: {
+            riskLevel: form.riskLevel,
+            inputModeration: form.inputModeration,
+            outputModeration: form.outputModeration,
+            contingencyMessage: form.contingencyMessage || undefined,
+            restrictedTopics: form.restrictedTopicsText.split("\n").map((s) => s.trim()).filter(Boolean),
+            disclaimers: [],
+            rejectionRules: [],
+            riskSignals: [],
+            confirmationsRequired: [],
+            allowedInternalTools: [],
+            prohibitedActions: [],
+          },
+        }),
+      });
+      setMessage({ tone: "success", text: "Políticas de seguridad guardadas." });
+    } catch (error) {
+      setMessage({ tone: "danger", text: error instanceof ApiError ? error.message : "No fue posible guardar." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      {message && <Alert tone={message.tone}>{message.text}</Alert>}
+      <div>
+        <Label htmlFor="s-riskLevel">Nivel de riesgo</Label>
+        <select
+          id="s-riskLevel"
+          value={form.riskLevel}
+          onChange={(e) => setForm((f) => ({ ...f, riskLevel: e.target.value as typeof form.riskLevel }))}
+          className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink"
+        >
+          {RISK_LEVELS.map((level) => (
+            <option key={level} value={level}>
+              {level}
+            </option>
+          ))}
+        </select>
+      </div>
+      <label className="flex items-center gap-2 text-sm text-ink">
+        <input
+          type="checkbox"
+          checked={form.inputModeration}
+          onChange={(e) => setForm((f) => ({ ...f, inputModeration: e.target.checked }))}
+          className="h-4 w-4 rounded border-border-strong"
+        />
+        Moderar entradas del usuario
+      </label>
+      <label className="flex items-center gap-2 text-sm text-ink">
+        <input
+          type="checkbox"
+          checked={form.outputModeration}
+          onChange={(e) => setForm((f) => ({ ...f, outputModeration: e.target.checked }))}
+          className="h-4 w-4 rounded border-border-strong"
+        />
+        Moderar respuestas generadas
+      </label>
+      <div>
+        <Label htmlFor="s-contingency">Mensaje de contingencia</Label>
+        <Textarea
+          id="s-contingency"
+          rows={2}
+          value={form.contingencyMessage}
+          onChange={(e) => setForm((f) => ({ ...f, contingencyMessage: e.target.value }))}
+        />
+      </div>
+      <div>
+        <Label htmlFor="s-restrictedTopics">Temas restringidos (uno por línea)</Label>
+        <Textarea
+          id="s-restrictedTopics"
+          rows={3}
+          value={form.restrictedTopicsText}
+          onChange={(e) => setForm((f) => ({ ...f, restrictedTopicsText: e.target.value }))}
+        />
+      </div>
+      <Button onClick={save} loading={saving} className="self-start">
+        Guardar seguridad
+      </Button>
+    </div>
+  );
+}

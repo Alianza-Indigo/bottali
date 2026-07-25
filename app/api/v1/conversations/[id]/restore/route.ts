@@ -1,0 +1,15 @@
+import { NextResponse } from "next/server";
+import { requireCurrentUser } from "@/lib/auth/current-user";
+import { restoreConversation } from "@/lib/conversations/service";
+import { handleApiError } from "@/lib/validation/http";
+
+export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await requireCurrentUser();
+    const { id } = await params;
+    await restoreConversation(id, user.id);
+    return NextResponse.json({ message: "Conversación restaurada." });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}

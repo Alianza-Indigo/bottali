@@ -1,0 +1,1 @@
+ALTER TABLE "tool_behavior" ADD COLUMN "memory_mode" "memory_mode" DEFAULT 'DISABLED' NOT NULL;

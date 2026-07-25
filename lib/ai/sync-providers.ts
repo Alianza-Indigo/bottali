@@ -1,0 +1,105 @@
+import { and, eq } from "drizzle-orm";
+import type { Database } from "@/lib/db/client";
+import { providerModels, providers } from "@/db/schema";
+import { getEnv } from "@/lib/env";
+
+interface ProviderSpec {
+  kind: "llm" | "embedding" | "moderation" | "stt" | "tts";
+  key: string;
+  name: string;
+  enabled: boolean;
+  models: Array<{ modelKey: string; displayName: string; contextWindow: number }>;
+}
+
+/**
+ * Idempotently reflects the *actually configured* providers (from environment variables)
+ * into the `providers`/`provider_models` catalog tables. The admin UI and tool builder read
+ * from this table, never from environment variables directly — this is what guarantees
+ * "no muestres proveedores ni modelos que no estén realmente configurados" (spec §22).
+ */
+export async function syncProvidersFromEnv(db: Database): Promise<void> {
+  const env = getEnv();
+
+  const specs: ProviderSpec[] = [
+    {
+      kind: "llm",
+      key: env.LLM_PROVIDER,
+      name: env.LLM_PROVIDER === "fake" ? "Proveedor de pruebas (fake)" : "Proveedor LLM configurado",
+      enabled: env.LLM_PROVIDER === "fake" || Boolean(env.LLM_API_KEY),
+      models:
+        env.LLM_PROVIDER === "fake"
+          ? [{ modelKey: "fake-standard", displayName: "Fake Standard (pruebas)", contextWindow: 8000 }]
+          : [{ modelKey: env.LLM_DEFAULT_MODEL, displayName: env.LLM_DEFAULT_MODEL, contextWindow: 128000 }].concat(
+              env.LLM_FALLBACK_MODEL
+                ? [{ modelKey: env.LLM_FALLBACK_MODEL, displayName: env.LLM_FALLBACK_MODEL, contextWindow: 128000 }]
+                : [],
+            ),
+    },
+    {
+      kind: "embedding",
+      key: env.EMBEDDING_PROVIDER,
+      name: env.EMBEDDING_PROVIDER === "fake" ? "Embeddings de pruebas (fake)" : "Proveedor de embeddings configurado",
+      enabled: env.EMBEDDING_PROVIDER === "fake" || Boolean(env.EMBEDDING_API_KEY),
+      models:
+        env.EMBEDDING_PROVIDER === "fake"
+          ? [{ modelKey: "fake-embedding", displayName: "Fake Embedding (pruebas)", contextWindow: 0 }]
+          : [{ modelKey: env.EMBEDDING_MODEL, displayName: env.EMBEDDING_MODEL, contextWindow: 0 }],
+    },
+    {
+      kind: "moderation",
+      key: env.MODERATION_PROVIDER,
+      name: env.MODERATION_PROVIDER === "fake" ? "Moderación de pruebas (fake)" : "Proveedor de moderación configurado",
+      enabled: env.MODERATION_PROVIDER === "fake" || Boolean(env.MODERATION_API_KEY),
+      models: [],
+    },
+    {
+      kind: "stt",
+      key: env.STT_PROVIDER,
+      name: "Reconocimiento de voz",
+      enabled: env.STT_PROVIDER === "openai-compatible" && Boolean(env.STT_API_KEY),
+      models: [],
+    },
+    {
+      kind: "tts",
+      key: env.TTS_PROVIDER,
+      name: "Síntesis de voz",
+      enabled: env.TTS_PROVIDER === "openai-compatible" && Boolean(env.TTS_API_KEY),
+      models: [],
+    },
+  ];
+
+  for (const spec of specs) {
+    const registryKey = `${spec.kind}:${spec.key}`;
+    const existing = await db.select({ id: providers.id }).from(providers).where(eq(providers.key, registryKey)).limit(1);
+
+    const providerId =
+      existing[0]?.id ??
+      (
+        await db
+          .insert(providers)
+          .values({ kind: spec.kind, key: registryKey, name: spec.name, enabled: spec.enabled })
+          .returning({ id: providers.id })
+      )[0]?.id;
+
+    if (!providerId) continue;
+
+    await db.update(providers).set({ enabled: spec.enabled, name: spec.name, updatedAt: new Date() }).where(eq(providers.id, providerId));
+
+    for (const model of spec.models) {
+      const existingModel = await db
+        .select({ id: providerModels.id })
+        .from(providerModels)
+        .where(and(eq(providerModels.providerId, providerId), eq(providerModels.modelKey, model.modelKey)))
+        .limit(1);
+      const alreadyPresent = existingModel.length > 0;
+      if (!alreadyPresent) {
+        await db.insert(providerModels).values({
+          providerId,
+          modelKey: model.modelKey,
+          displayName: model.displayName,
+          contextWindow: model.contextWindow,
+        });
+      }
+    }
+  }
+}

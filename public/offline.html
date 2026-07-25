@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sin conexión · Plataforma de Herramientas Conversacionales</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 1.5rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0b1220; color: #e2e8f0; }
+    .card { background: #111a2c; border-color: #1e293b; }
+    button { background: #3b82f6; }
+  }
+  .card {
+    max-width: 28rem;
+    width: 100%;
+    text-align: center;
+    padding: 2rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 9999px;
+    background: #1d4ed8;
+    color: #fff;
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  h1 { font-size: 1.125rem; margin: 0 0 0.5rem; }
+  p { font-size: 0.9rem; line-height: 1.5; margin: 0 0 1.25rem; opacity: 0.8; }
+  button {
+    background: #1d4ed8;
+    color: #fff;
+    border: none;
+    border-radius: 0.5rem;
+    padding: 0.6rem 1.25rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="badge" aria-hidden="true">CP</div>
+    <h1>Estás sin conexión</h1>
+    <p>No pudimos cargar esta página porque no hay conexión a internet. Tu sesión, conversaciones y archivos requieren conexión — vuelve a intentarlo cuando la recuperes.</p>
+    <button type="button" onclick="window.location.reload()">Reintentar</button>
+  </main>
+</body>
+</html>
