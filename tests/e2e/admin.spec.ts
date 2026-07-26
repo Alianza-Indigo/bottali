@@ -26,6 +26,15 @@ test.describe("Panel administrativo", () => {
     await expect(page.getByText("DRAFT").first()).toBeVisible();
   });
 
+  test("un super admin puede crear un usuario que recibe un correo para definir su contraseña", async ({ page }) => {
+    await page.goto("/admin/users");
+    const email = `e2e-user-${Date.now()}@example.com`;
+    await page.getByLabel("Correo").fill(email);
+    await page.getByLabel("Nombre").fill("Persona creada por e2e");
+    await page.getByRole("button", { name: "Crear", exact: true }).click();
+    await expect(page.getByText(email)).toBeVisible({ timeout: 10_000 });
+  });
+
   test("un usuario final es redirigido fuera del panel administrativo", async ({ page }) => {
     await page.context().clearCookies();
     await loginAs(page, DEMO_CREDENTIALS.user.email, DEMO_CREDENTIALS.user.password);

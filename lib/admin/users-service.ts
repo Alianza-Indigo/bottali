@@ -1,15 +1,70 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { groupMembers, groups, roles, sessions, userRoles, users } from "@/db/schema";
+import { groupMembers, groups, passwordResetTokens, roles, sessions, userProfiles, userRoles, users } from "@/db/schema";
 import { assertNotLastSuperAdmin, getRoleIdsByKeys } from "@/lib/permissions/rbac";
 import type { RoleKey } from "@/lib/permissions/definitions";
 import { recordAuditEvent } from "@/lib/audit/log";
-import { NotFoundError, ValidationError } from "@/lib/utils/errors";
+import { hashPassword } from "@/lib/auth/password";
+import { generateOpaqueToken, hashToken } from "@/lib/auth/tokens";
+import { getEnv } from "@/lib/env";
+import { getEmailProvider } from "@/lib/notifications/email";
+import { ConflictError, NotFoundError, ValidationError } from "@/lib/utils/errors";
 
 async function getUserOr404(userId: string) {
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   if (!rows[0]) throw new NotFoundError("Usuario no encontrado.");
   return rows[0];
+}
+
+export interface CreateUserByAdminInput {
+  email: string;
+  displayName: string;
+  roleKey?: RoleKey;
+}
+
+/**
+ * Admin-initiated user creation (§27 "POST /api/v1/admin/users", also the basis for bulk
+ * import). The admin never sets or sees a password: a random one is generated purely to
+ * satisfy the NOT NULL column, and a password-reset link is emailed so the new user picks
+ * their own — the same flow as "forgot password", reused instead of duplicated.
+ */
+export async function createUserByAdmin(input: CreateUserByAdminInput, actorId: string): Promise<{ userId: string }> {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, normalizedEmail)).limit(1);
+  if (existing[0]) throw new ConflictError("Ya existe un usuario con ese correo electrónico.");
+
+  const passwordHash = await hashPassword(generateOpaqueToken());
+  const userId = await db.transaction(async (tx) => {
+    const [user] = await tx
+      .insert(users)
+      .values({ email: normalizedEmail, passwordHash, status: "ACTIVE", emailVerifiedAt: new Date() })
+      .returning({ id: users.id });
+    if (!user) throw new Error("No fue posible crear el usuario.");
+    await tx.insert(userProfiles).values({ userId: user.id, displayName: input.displayName });
+
+    const roleMap = await getRoleIdsByKeys([input.roleKey ?? "USER"]);
+    const roleId = roleMap.get(input.roleKey ?? "USER");
+    if (roleId) await tx.insert(userRoles).values({ userId: user.id, roleId, assignedBy: actorId });
+
+    return user.id;
+  });
+
+  const env = getEnv();
+  const token = generateOpaqueToken();
+  await db.insert(passwordResetTokens).values({
+    userId,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + env.PASSWORD_RESET_TTL_SECONDS * 1000),
+  });
+  const resetUrl = `${env.NEXT_PUBLIC_APP_URL}/reset-password?token=${token}`;
+  await getEmailProvider().send({
+    to: normalizedEmail,
+    subject: "Se creó una cuenta para ti",
+    text: `Un administrador creó una cuenta para ti en la plataforma. Define tu contraseña visitando: ${resetUrl}`,
+  });
+
+  await recordAuditEvent({ actorId, action: "user.create", resourceType: "user", resourceId: userId, metadata: { email: normalizedEmail } });
+  return { userId };
 }
 
 export async function suspendUser(userId: string, actorId: string): Promise<void> {

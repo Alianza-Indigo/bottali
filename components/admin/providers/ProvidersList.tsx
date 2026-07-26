@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { apiPost, ApiError } from "@/lib/api/client";
+import { useRouter } from "next/navigation";
+import { apiPatch, apiPost, ApiError } from "@/lib/api/client";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
@@ -16,6 +17,7 @@ interface ProviderRow {
 }
 
 export function ProvidersList({ providers }: { providers: ProviderRow[] }) {
+  const router = useRouter();
   const [status, setStatus] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +30,32 @@ export function ProvidersList({ providers }: { providers: ProviderRow[] }) {
       setStatus((prev) => ({ ...prev, [id]: result.healthcheck.healthy ? "healthy" : "unhealthy" }));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "No fue posible probar el proveedor.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleEnabled = async (id: string, enabled: boolean) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await apiPatch(`/api/v1/admin/providers/${id}`, { enabled: !enabled });
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "No fue posible actualizar el proveedor.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const syncModels = async (id: string) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await apiPost(`/api/v1/admin/providers/${id}/sync-models`);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "No fue posible sincronizar los modelos.");
     } finally {
       setBusyId(null);
     }
@@ -58,6 +86,14 @@ export function ProvidersList({ providers }: { providers: ProviderRow[] }) {
               )}
               <Button size="sm" variant="secondary" loading={busyId === provider.id} onClick={() => test(provider.id)}>
                 Probar
+              </Button>
+              {provider.kind === "llm" && (
+                <Button size="sm" variant="secondary" loading={busyId === provider.id} onClick={() => syncModels(provider.id)}>
+                  Sincronizar modelos
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" loading={busyId === provider.id} onClick={() => toggleEnabled(provider.id, provider.enabled)}>
+                {provider.enabled ? "Deshabilitar" : "Habilitar"}
               </Button>
             </div>
           </li>

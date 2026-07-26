@@ -1,4 +1,5 @@
 import { desc } from "drizzle-orm";
+import Link from "next/link";
 import { db } from "@/lib/db/client";
 import { auditEvents } from "@/db/schema";
 import { Card } from "@/components/ui/Card";
@@ -30,7 +31,11 @@ export default async function AdminAuditPage() {
                 {rows.map((event) => (
                   <tr key={event.id}>
                     <td className="px-4 py-2 text-xs text-ink-faint">{new Date(event.createdAt).toLocaleString("es")}</td>
-                    <td className="px-4 py-2 text-ink">{event.action}</td>
+                    <td className="px-4 py-2 text-ink">
+                      <Link href={`/admin/audit/${event.id}`} className="hover:underline">
+                        {event.action}
+                      </Link>
+                    </td>
                     <td className="px-4 py-2 text-ink-muted">
                       {event.resourceType}
                       {event.resourceId ? ` (${event.resourceId.slice(0, 8)}…)` : ""}
