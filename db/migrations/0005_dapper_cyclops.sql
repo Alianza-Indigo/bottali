@@ -1,0 +1,1 @@
+ALTER TABLE "tool_call_confirmations" ALTER COLUMN "generation_state_snapshot" DROP NOT NULL;

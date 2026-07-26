@@ -116,6 +116,9 @@ describe("tool-call confirmation cycle (real Postgres, fake LLM provider)", () =
 
     const confirmationRows = await db.select().from(toolCallConfirmations).where(eq(toolCallConfirmations.id, confirmationId)).limit(1);
     expect(confirmationRows[0]!.status).toBe("APPROVED");
+    // The snapshot (system prompt, turn history, tool results) is only needed to resume a
+    // PENDING confirmation — once APPROVED it must not linger holding that content.
+    expect(confirmationRows[0]!.generationStateSnapshot).toBeNull();
 
     const reservationRows = await db.select().from(usageReservations).where(eq(usageReservations.id, confirmationRows[0]!.reservationId)).limit(1);
     expect(reservationRows[0]!.status).toBe("RECONCILED");
@@ -151,6 +154,7 @@ describe("tool-call confirmation cycle (real Postgres, fake LLM provider)", () =
 
     const confirmationRows = await db.select().from(toolCallConfirmations).where(eq(toolCallConfirmations.id, confirmationId)).limit(1);
     expect(confirmationRows[0]!.status).toBe("REJECTED");
+    expect(confirmationRows[0]!.generationStateSnapshot).toBeNull();
 
     await db.delete(tools).where(eq(tools.id, toolId));
   });
@@ -177,6 +181,7 @@ describe("tool-call confirmation cycle (real Postgres, fake LLM provider)", () =
 
     const confirmationRows = await db.select().from(toolCallConfirmations).where(eq(toolCallConfirmations.id, confirmationId)).limit(1);
     expect(confirmationRows[0]!.status).toBe("EXPIRED");
+    expect(confirmationRows[0]!.generationStateSnapshot).toBeNull();
     const reservationRows = await db.select().from(usageReservations).where(eq(usageReservations.id, confirmationRows[0]!.reservationId)).limit(1);
     expect(reservationRows[0]!.status).toBe("RELEASED");
 

@@ -153,18 +153,20 @@ export const toolCallConfirmations = pgTable(
     toolName: varchar("tool_name", { length: 80 }).notNull(),
     argumentsJson: text("arguments_json").notNull(),
     status: toolCallConfirmationStatusEnum("status").notNull().default("PENDING"),
-    generationStateSnapshot: jsonb("generation_state_snapshot")
-      .$type<{
-        generationMessages: Array<{ role: string; content: string; toolCalls?: unknown; toolCallId?: string }>;
-        round: number;
-        accumulatedUsage: { inputTokens: number; outputTokens: number };
-        accumulatedLatencyMs: number;
-        userMessageContent: string;
-        /** Tool calls from the same round as the paused one, not yet processed — the paused
-         * call itself is NOT included (it's the top-level toolCallId/toolName/argumentsJson). */
-        remainingCalls: Array<{ id: string; name: string; arguments: string }>;
-      }>()
-      .notNull(),
+    // Nullable deliberately: it holds a full generation snapshot (system prompt, turn
+    // history, tool results) that's only needed to resume a PENDING confirmation. Once one
+    // reaches a terminal state (APPROVED/REJECTED/EXPIRED) it's never read again, so it's
+    // cleared rather than left to persist sensitive conversation content indefinitely.
+    generationStateSnapshot: jsonb("generation_state_snapshot").$type<{
+      generationMessages: Array<{ role: string; content: string; toolCalls?: unknown; toolCallId?: string }>;
+      round: number;
+      accumulatedUsage: { inputTokens: number; outputTokens: number };
+      accumulatedLatencyMs: number;
+      userMessageContent: string;
+      /** Tool calls from the same round as the paused one, not yet processed — the paused
+       * call itself is NOT included (it's the top-level toolCallId/toolName/argumentsJson). */
+      remainingCalls: Array<{ id: string; name: string; arguments: string }>;
+    }>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

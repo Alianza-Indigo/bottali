@@ -61,9 +61,21 @@ export async function claimConfirmationForRejection(id: string, userId: string):
 }
 
 /** Finalizes an EXECUTING confirmation as APPROVED once its tool has actually run. Safe to
- * call unconditionally — only the request holding the EXECUTING claim ever reaches here. */
+ * call unconditionally — only the request holding the EXECUTING claim ever reaches here.
+ * Clears the snapshot in the same write: APPROVED is terminal, so it will never be read
+ * again, and it can carry sensitive conversation content (system prompt, turn history). */
 export async function markConfirmationApproved(id: string): Promise<void> {
-  await db.update(toolCallConfirmations).set({ status: "APPROVED", resolvedAt: new Date() }).where(eq(toolCallConfirmations.id, id));
+  await db
+    .update(toolCallConfirmations)
+    .set({ status: "APPROVED", resolvedAt: new Date(), generationStateSnapshot: null })
+    .where(eq(toolCallConfirmations.id, id));
+}
+
+/** Clears a resolved confirmation's snapshot after the caller has already read whatever it
+ * needed from it — used by the reject path, where the atomic claim (which must return the
+ * snapshot) and "we're now done with it" happen in two separate steps. */
+export async function clearConfirmationSnapshot(id: string): Promise<void> {
+  await db.update(toolCallConfirmations).set({ generationStateSnapshot: null }).where(eq(toolCallConfirmations.id, id));
 }
 
 /** Reads the current row purely to explain WHY a claim failed (not found / wrong owner /
@@ -83,7 +95,7 @@ export async function getConfirmationById(id: string): Promise<ToolCallConfirmat
 export async function expireSingleConfirmation(id: string, reservationId: string): Promise<void> {
   const rows = await db
     .update(toolCallConfirmations)
-    .set({ status: "EXPIRED", resolvedAt: new Date() })
+    .set({ status: "EXPIRED", resolvedAt: new Date(), generationStateSnapshot: null })
     .where(and(eq(toolCallConfirmations.id, id), eq(toolCallConfirmations.status, "PENDING")))
     .returning({ id: toolCallConfirmations.id });
   if (rows.length > 0) {

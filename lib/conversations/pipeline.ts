@@ -16,6 +16,7 @@ import { maybeGenerateTitle } from "./service";
 import {
   claimConfirmationForExecution,
   claimConfirmationForRejection,
+  clearConfirmationSnapshot,
   computeConfirmationExpiry,
   expirePendingConfirmationsForConversation,
   expireSingleConfirmation,
@@ -759,20 +760,27 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
       ? await executeToolCallForPipeline(call, context, allowedToolNames)
       : JSON.stringify({ error: "El usuario rechazó la ejecución de esta herramienta." });
 
-  // Only "approve" needs a follow-up write: this request already holds the exclusive
-  // EXECUTING claim, so finalizing to APPROVED here is safe unconditionally. "reject" was
-  // already finalized to REJECTED by the atomic claim itself — there was nothing to execute.
-  if (params.decision === "approve") {
-    await markConfirmationApproved(confirmation.id);
-  }
-
+  // confirmation.generationStateSnapshot is the in-memory row from the claim above — reading
+  // it here is unaffected by the DB writes just below, which target the same row but don't
+  // retroactively change this already-fetched object.
   const snapshot = confirmation.generationStateSnapshot;
+  if (!snapshot) throw new Error("La confirmación reclamada no tiene un snapshot de generación (invariante violada).");
   const generationMessages: GenerationMessage[] = [
     // Round-tripped through jsonb, so the stored shape is only structurally typed — trust it,
     // since nothing but runToolRoundLoop/this module ever writes a snapshot row.
     ...(snapshot.generationMessages as GenerationMessage[]),
     { role: "tool", content: wrapToolResultForModel(toolResultContent), toolCallId: call.id },
   ];
+
+  // Only "approve" needs a follow-up write: this request already holds the exclusive
+  // EXECUTING claim, so finalizing to APPROVED here is safe unconditionally (that write also
+  // clears the snapshot). "reject" was already finalized to REJECTED by the atomic claim
+  // itself — there was nothing to execute — so only the now-unneeded snapshot needs clearing.
+  if (params.decision === "approve") {
+    await markConfirmationApproved(confirmation.id);
+  } else {
+    await clearConfirmationSnapshot(confirmation.id);
+  }
 
   const startedAt = Date.now();
   try {
