@@ -12,9 +12,31 @@ export interface LLMModel {
   supportsStreaming: boolean;
 }
 
+/** One function/tool call the model asked to run — OpenAI-style: id links it to the
+ * eventual "tool" role result message, arguments is a raw JSON string (may be malformed,
+ * since it comes straight from the model and must be validated/parsed by the caller). */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 export interface GenerationMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /** Present on an "assistant" message that requested one or more tool calls. */
+  toolCalls?: ToolCall[];
+  /** Present on a "tool" role message: which call this is the result of. */
+  toolCallId?: string;
+}
+
+/** A tool the model is allowed to call this turn, described as an OpenAI-style function
+ * spec (name/description/JSON-schema parameters) — provider-agnostic on purpose so any
+ * LLMProvider implementation can translate it into its own wire format. */
+export interface ToolSpec {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
 }
 
 export interface GenerationRequest {
@@ -23,6 +45,10 @@ export interface GenerationRequest {
   temperature?: number;
   topP?: number;
   maxOutputTokens?: number;
+  /** Tools the model may call this turn. Omitted entirely (not an empty array) when the
+   * calling tool version has internal tools disabled, so providers that don't support
+   * tool calling at all can just ignore the field unconditionally. */
+  tools?: ToolSpec[];
   /** AbortSignal propagated from the HTTP request so client-disconnects cancel generation. */
   signal?: AbortSignal;
 }
@@ -34,10 +60,12 @@ export interface GenerationUsage {
 
 export interface GenerationResult {
   content: string;
-  finishReason: "stop" | "length" | "content_filter" | "error";
+  finishReason: "stop" | "length" | "content_filter" | "tool_calls" | "error";
   usage: GenerationUsage;
   model: string;
   latencyMs: number;
+  /** Present when finishReason === "tool_calls". */
+  toolCalls?: ToolCall[];
 }
 
 export interface GenerationChunk {
@@ -45,6 +73,8 @@ export interface GenerationChunk {
   done: boolean;
   finishReason?: GenerationResult["finishReason"];
   usage?: GenerationUsage;
+  /** Present on the final chunk when finishReason === "tool_calls". */
+  toolCalls?: ToolCall[];
 }
 
 export interface LLMProvider {

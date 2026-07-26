@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { knowledgeBases } from "@/db/schema";
 import { retrieveRelevantChunks } from "@/lib/knowledge/retrieval";
+import type { ToolSpec } from "@/lib/ai/types";
 import type { ToolExecutionContext, ToolExecutionResult } from "./types";
 import { evaluateArithmeticExpression } from "./calculator";
 
@@ -10,6 +11,11 @@ export interface ToolDefinition<TInput = unknown> {
   name: string;
   description: string;
   inputSchema: z.ZodType<TInput>;
+  /** Hand-authored JSON Schema mirroring inputSchema, exposed to the LLM as this tool's
+   * call signature. Kept separate from inputSchema (rather than derived from it) because
+   * these zod schemas are simple enough that a generic zod-to-JSON-Schema conversion would
+   * be more machinery than the four tools here justify. */
+  parameters: Record<string, unknown>;
   requiresConfirmation: boolean;
   riskLevel: "LOW" | "MEDIUM" | "HIGH";
   execute(input: TInput, context: ToolExecutionContext): Promise<ToolExecutionResult>;
@@ -36,6 +42,11 @@ export const INTERNAL_TOOLS: Record<string, ToolDefinition<unknown>> = {
     name: "calculator",
     description: "Evalúa una expresión aritmética simple (+, -, *, /, paréntesis).",
     inputSchema: calculatorSchema,
+    parameters: {
+      type: "object",
+      properties: { expression: { type: "string", description: "Expresión aritmética a evaluar, p. ej. \"(2 + 3) * 4\"." } },
+      required: ["expression"],
+    },
     requiresConfirmation: false,
     riskLevel: "LOW",
     async execute(input: z.infer<typeof calculatorSchema>): Promise<ToolExecutionResult> {
@@ -47,6 +58,11 @@ export const INTERNAL_TOOLS: Record<string, ToolDefinition<unknown>> = {
     name: "datetime",
     description: "Devuelve la fecha y hora actual, opcionalmente en una zona horaria.",
     inputSchema: dateTimeSchema,
+    parameters: {
+      type: "object",
+      properties: { timezone: { type: "string", description: "Zona horaria IANA, p. ej. \"America/Bogota\". Opcional, por defecto UTC." } },
+      required: [],
+    },
     requiresConfirmation: false,
     riskLevel: "LOW",
     async execute(input: z.infer<typeof dateTimeSchema>): Promise<ToolExecutionResult> {
@@ -62,6 +78,14 @@ export const INTERNAL_TOOLS: Record<string, ToolDefinition<unknown>> = {
     name: "generate_text_document",
     description: "Genera un documento de texto plano a partir de un título y contenido.",
     inputSchema: documentSchema,
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Título del documento." },
+        content: { type: "string", description: "Contenido del documento en texto plano." },
+      },
+      required: ["title", "content"],
+    },
     requiresConfirmation: false,
     riskLevel: "LOW",
     async execute(input: z.infer<typeof documentSchema>): Promise<ToolExecutionResult> {
@@ -73,6 +97,11 @@ export const INTERNAL_TOOLS: Record<string, ToolDefinition<unknown>> = {
     name: "knowledge_base_query",
     description: "Busca en la base de conocimiento de la herramienta actual los fragmentos más relevantes para una consulta.",
     inputSchema: knowledgeQuerySchema,
+    parameters: {
+      type: "object",
+      properties: { query: { type: "string", description: "Consulta en lenguaje natural a buscar en la base de conocimiento." } },
+      required: ["query"],
+    },
     requiresConfirmation: false,
     riskLevel: "LOW",
     async execute(input: z.infer<typeof knowledgeQuerySchema>, context: ToolExecutionContext): Promise<ToolExecutionResult> {
@@ -103,4 +132,13 @@ export function listInternalTools(): Array<Pick<ToolDefinition, "name" | "descri
     riskLevel,
     requiresConfirmation,
   }));
+}
+
+/** Builds the provider-agnostic tool specs (§15) the conversational pipeline attaches to a
+ * generation request when a tool version has internal tools enabled. */
+export function listToolSpecsForLLM(allowedToolNames: string[]): ToolSpec[] {
+  return allowedToolNames
+    .map((name) => INTERNAL_TOOLS[name])
+    .filter((definition): definition is ToolDefinition => Boolean(definition))
+    .map(({ name, description, parameters }) => ({ name, description, parameters }));
 }

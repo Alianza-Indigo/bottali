@@ -12,6 +12,16 @@ type SafetyPolicies = NonNullable<FullVersionConfig["safetyPolicies"]>;
 
 const RISK_LEVELS = ["LOW", "MEDIUM", "HIGH"] as const;
 
+// Mirrors lib/ai/tools/registry.ts's INTERNAL_TOOLS (§15) — hardcoded here rather than
+// imported, since that registry module pulls in lib/db/client.ts (a real Postgres
+// connection), which cannot be bundled into a "use client" component.
+const AVAILABLE_INTERNAL_TOOLS = [
+  { name: "calculator", description: "Calculadora" },
+  { name: "datetime", description: "Fecha y hora" },
+  { name: "generate_text_document", description: "Generación de documento" },
+  { name: "knowledge_base_query", description: "Consulta a base de conocimiento" },
+] as const;
+
 export function SafetySection({ toolId, versionId, initial }: { toolId: string; versionId: string; initial: SafetyPolicies | null }) {
   const [form, setForm] = useState({
     riskLevel: (initial?.riskLevel ?? "LOW") as (typeof RISK_LEVELS)[number],
@@ -19,6 +29,7 @@ export function SafetySection({ toolId, versionId, initial }: { toolId: string; 
     outputModeration: initial?.outputModeration ?? true,
     contingencyMessage: initial?.contingencyMessage ?? "",
     restrictedTopicsText: (initial?.restrictedTopics ?? []).join("\n"),
+    allowedInternalTools: initial?.allowedInternalTools ?? [],
   });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
@@ -40,7 +51,7 @@ export function SafetySection({ toolId, versionId, initial }: { toolId: string; 
             rejectionRules: [],
             riskSignals: [],
             confirmationsRequired: [],
-            allowedInternalTools: [],
+            allowedInternalTools: form.allowedInternalTools,
             prohibitedActions: [],
           },
         }),
@@ -106,6 +117,33 @@ export function SafetySection({ toolId, versionId, initial }: { toolId: string; 
           value={form.restrictedTopicsText}
           onChange={(e) => setForm((f) => ({ ...f, restrictedTopicsText: e.target.value }))}
         />
+      </div>
+      <div>
+        <Label>Herramientas internas permitidas</Label>
+        <p className="mb-2 text-xs text-ink-muted">
+          El modelo solo podrá llamar a las herramientas marcadas aquí, y únicamente si la capacidad
+          &quot;Herramientas internas&quot; también está activada en la sección de Capacidades.
+        </p>
+        <div className="flex flex-col gap-2">
+          {AVAILABLE_INTERNAL_TOOLS.map((tool) => (
+            <label key={tool.name} className="flex items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                checked={form.allowedInternalTools.includes(tool.name)}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    allowedInternalTools: e.target.checked
+                      ? [...f.allowedInternalTools, tool.name]
+                      : f.allowedInternalTools.filter((name) => name !== tool.name),
+                  }))
+                }
+                className="h-4 w-4 rounded border-border-strong"
+              />
+              {tool.description} ({tool.name})
+            </label>
+          ))}
+        </div>
       </div>
       <Button onClick={save} loading={saving} className="self-start">
         Guardar seguridad

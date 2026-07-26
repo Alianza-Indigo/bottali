@@ -5,7 +5,27 @@ import type {
   LLMModel,
   LLMProvider,
   ProviderHealth,
+  ToolCall,
+  ToolSpec,
 } from "../types";
+
+function toOpenAITools(tools: ToolSpec[] | undefined) {
+  if (!tools?.length) return undefined;
+  return tools.map((tool) => ({
+    type: "function" as const,
+    function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+  }));
+}
+
+interface OpenAIToolCall {
+  id: string;
+  function: { name: string; arguments: string };
+}
+
+function fromOpenAIToolCalls(raw: OpenAIToolCall[] | undefined): ToolCall[] | undefined {
+  if (!raw?.length) return undefined;
+  return raw.map((call) => ({ id: call.id, name: call.function.name, arguments: call.function.arguments }));
+}
 
 export interface OpenAICompatibleConfig {
   apiKey: string;
@@ -82,6 +102,7 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
             temperature: request.temperature,
             top_p: request.topP,
             max_tokens: request.maxOutputTokens,
+            tools: toOpenAITools(request.tools),
             stream: false,
           }),
         });
@@ -96,7 +117,7 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
         }
 
         const body = (await res.json()) as {
-          choices: Array<{ message: { content: string }; finish_reason: string }>;
+          choices: Array<{ message: { content: string | null; tool_calls?: OpenAIToolCall[] }; finish_reason: string }>;
           usage?: { prompt_tokens: number; completion_tokens: number };
         };
         const choice = body.choices[0];
@@ -109,6 +130,7 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
           },
           model: request.model,
           latencyMs: Date.now() - started,
+          toolCalls: fromOpenAIToolCalls(choice?.message.tool_calls),
         };
       } catch (error) {
         lastError = error;
@@ -145,6 +167,7 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
           temperature: request.temperature,
           top_p: request.topP,
           max_tokens: request.maxOutputTokens,
+          tools: toOpenAITools(request.tools),
           stream: true,
         }),
       });
@@ -157,6 +180,10 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
       const decoder = new TextDecoder();
       let buffer = "";
       let finishReason: GenerationChunk["finishReason"] = "stop";
+      // Streamed tool calls arrive as fragments (id/name in the first fragment, arguments
+      // dribbled across several) keyed by their position in the array — accumulate by index
+      // and only emit the assembled ToolCall[] once the stream signals finish_reason.
+      const toolCallFragments = new Map<number, { id: string; name: string; arguments: string }>();
 
       while (true) {
         const { value, done } = await reader.read();
@@ -172,9 +199,22 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
           if (payload === "[DONE]") continue;
           try {
             const parsed = JSON.parse(payload) as {
-              choices: Array<{ delta?: { content?: string }; finish_reason?: string }>;
+              choices: Array<{
+                delta?: {
+                  content?: string;
+                  tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>;
+                };
+                finish_reason?: string;
+              }>;
             };
             const delta = parsed.choices[0]?.delta?.content ?? "";
+            for (const fragment of parsed.choices[0]?.delta?.tool_calls ?? []) {
+              const existing = toolCallFragments.get(fragment.index) ?? { id: "", name: "", arguments: "" };
+              if (fragment.id) existing.id = fragment.id;
+              if (fragment.function?.name) existing.name += fragment.function.name;
+              if (fragment.function?.arguments) existing.arguments += fragment.function.arguments;
+              toolCallFragments.set(fragment.index, existing);
+            }
             if (parsed.choices[0]?.finish_reason) {
               finishReason = parsed.choices[0].finish_reason as GenerationChunk["finishReason"];
             }
@@ -184,7 +224,11 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
           }
         }
       }
-      yield { delta: "", done: true, finishReason };
+      const toolCalls =
+        toolCallFragments.size > 0
+          ? [...toolCallFragments.entries()].sort(([a], [b]) => a - b).map(([, call]) => call)
+          : undefined;
+      yield { delta: "", done: true, finishReason, toolCalls };
     } finally {
       clearTimeout(timeout);
     }

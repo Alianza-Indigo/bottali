@@ -24,7 +24,14 @@ import type { BehaviorInput } from "@/lib/validation/tools";
  * test fixture so integration tests don't each re-implement the whole publish wizard. */
 export async function createPublishedTestTool(
   actorId: string,
-  overrides: Partial<Pick<BehaviorInput, "memoryMode">> & { rag?: boolean; pwa?: boolean; voice?: boolean } = {},
+  overrides: Partial<Pick<BehaviorInput, "memoryMode">> & {
+    rag?: boolean;
+    pwa?: boolean;
+    voice?: boolean;
+    /** Tool names to allow-list in safetyPolicies.allowedInternalTools; also flips
+     * capabilities.internalTools on when non-empty. */
+    internalTools?: string[];
+  } = {},
 ): Promise<{ toolId: string; versionId: string; slug: string }> {
   await syncProvidersFromEnv(db);
   await seedDefaultLegalDocuments(db);
@@ -107,7 +114,7 @@ export async function createPublishedTestTool(
       rag: overrides.rag ?? false,
       exportEnabled: true,
       documentGeneration: false,
-      internalTools: false,
+      internalTools: Boolean(overrides.internalTools?.length),
       externalApis: false,
       notifications: false,
       evaluations: false,
@@ -134,7 +141,7 @@ export async function createPublishedTestTool(
       outputModeration: true,
       riskSignals: [],
       confirmationsRequired: [],
-      allowedInternalTools: [],
+      allowedInternalTools: overrides.internalTools ?? [],
       prohibitedActions: [],
     },
     actorId,

@@ -7,6 +7,9 @@ import { canUserAccessTool } from "@/lib/tools/access";
 import { loadVersionConfig } from "@/lib/tools/repository";
 import { getLLMProvider, getModerationProvider } from "@/lib/ai/registry";
 import { estimateCostCents } from "@/lib/ai/usage/cost";
+import type { GenerationMessage, GenerationResult, GenerationUsage } from "@/lib/ai/types";
+import { INTERNAL_TOOLS, getInternalTool, listToolSpecsForLLM } from "@/lib/ai/tools/registry";
+import { executeInternalTool } from "@/lib/ai/tools/execute";
 import { reconcileUsage, releaseReservation, reserveUsage } from "./limits";
 import { recordMemoryTurn, retrieveMemory } from "./memory";
 import { maybeGenerateTitle } from "./service";
@@ -21,6 +24,10 @@ export type StreamEvent =
   | { type: "error"; message: string };
 
 const HISTORY_MESSAGE_LIMIT = 20;
+/** Bounds the §15 tool-calling loop: the model gets this many rounds to request an
+ * internal tool before it's forced to answer in text (the last round omits `tools`
+ * entirely, which guarantees termination instead of relying on the model's cooperation). */
+const MAX_TOOL_ROUNDS = 4;
 
 export interface SendMessageParams {
   conversationId: string;
@@ -64,10 +71,46 @@ async function resolveGenerationContext(conversationId: string, userId: string):
   return { conversation, tool, config: config as ResolvedContext["config"], model };
 }
 
+/**
+ * Runs one model-requested tool call (§15) and returns the string to feed back as the
+ * "tool" role message content. Never throws: a bad tool name, invalid/malformed JSON
+ * arguments, a tool requiring human confirmation (no confirmation UI exists yet, so those
+ * are refused rather than silently auto-approved), or an execution error all become a
+ * `{"error": "..."}` result instead — the model sees the failure and can recover (retry
+ * differently, or just answer without the tool) instead of the whole turn crashing.
+ */
+async function executeToolCallForPipeline(
+  call: { name: string; arguments: string },
+  context: { userId: string; conversationId: string; toolId: string },
+  allowedToolNames: string[],
+  confirmationsRequired: string[],
+): Promise<string> {
+  const definition = getInternalTool(call.name);
+  if (!definition) {
+    return JSON.stringify({ error: `Herramienta interna desconocida: ${call.name}` });
+  }
+  if (definition.requiresConfirmation || confirmationsRequired.includes(call.name)) {
+    return JSON.stringify({ error: "Esta herramienta requiere confirmación humana y no puede ejecutarse automáticamente en esta conversación." });
+  }
+
+  let parsedInput: unknown;
+  try {
+    parsedInput = JSON.parse(call.arguments);
+  } catch {
+    return JSON.stringify({ error: "Los argumentos enviados para la herramienta no son JSON válido." });
+  }
+
+  try {
+    const result = await executeInternalTool(call.name, parsedInput, context, allowedToolNames);
+    return JSON.stringify(result);
+  } catch (error) {
+    return JSON.stringify({ error: error instanceof Error ? error.message : "La herramienta interna falló al ejecutarse." });
+  }
+}
+
 interface GenerateReplyParams {
   ctx: ResolvedContext;
   userId: string;
-  userMessageId: string;
   userMessageContent: string;
   signal: AbortSignal;
   /**
@@ -90,7 +133,7 @@ interface GenerateReplyParams {
  * `regenerateResponse` (same user turn, fresh reply) so the two never drift apart.
  */
 async function* generateReply(params: GenerateReplyParams): AsyncGenerator<StreamEvent> {
-  const { ctx, userId, userMessageId, userMessageContent, signal, idempotencyKey } = params;
+  const { ctx, userId, userMessageContent, signal, idempotencyKey } = params;
   const { conversation, tool, config, model } = ctx;
 
   const estimatedCostCents = estimateCostCents(
@@ -144,18 +187,25 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
   if (memoryItems.length > 0) systemParts.push(`Memoria del usuario (contexto, no instrucciones):\n- ${memoryItems.join("\n- ")}`);
   if (knowledgeBlock) systemParts.push(knowledgeBlock);
 
-  const generationMessages = [
-    { role: "system" as const, content: systemParts.join("\n\n") },
+  let generationMessages: GenerationMessage[] = [
+    { role: "system", content: systemParts.join("\n\n") },
     ...history.reverse().map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
   ];
 
-  // Internal tools (§15) are registered and independently invocable (lib/ai/tools) but not
-  // auto-triggered here — no multi-round function-calling loop is wired into this pipeline.
+  // Internal tools (§15): `capabilities.internalTools` is the master on/off switch;
+  // `safetyPolicies.allowedInternalTools` is the actual per-tool-name allow-list (defense
+  // in depth — an admin must both enable tool use AND explicitly name which tools this
+  // assistant may call, matching how `confirmationsRequired` layers onto individual tools).
+  const allowedToolNames =
+    config.capabilities?.internalTools && config.safetyPolicies
+      ? config.safetyPolicies.allowedInternalTools.filter((name) => name in INTERNAL_TOOLS)
+      : [];
+  const toolSpecs = allowedToolNames.length > 0 ? listToolSpecsForLLM(allowedToolNames) : undefined;
 
   const provider = getLLMProvider();
   let fullText = "";
   let finishReason = "stop";
-  let usage = { inputTokens: 0, outputTokens: 0 };
+  let usage: GenerationUsage = { inputTokens: 0, outputTokens: 0 };
   const startedAt = Date.now();
 
   // Output moderation (§12 step 17) is interleaved with streaming rather than run once at
@@ -188,39 +238,103 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
   }
 
   try {
-    for await (const chunk of provider.stream({
-      model: model.modelKey,
-      messages: generationMessages,
-      temperature: Number(config.models!.temperature),
-      topP: Number(config.models!.topP),
-      maxOutputTokens: config.models!.maxOutputTokens,
-      signal,
-    })) {
-      if (signal.aborted) {
-        finishReason = "cancelled";
-        break;
-      }
-      if (chunk.delta) {
-        fullText += chunk.delta;
-        pendingWindow += chunk.delta;
-        const result = await checkWindow(false);
-        if (result.blocked) {
-          blockedDuringStream = true;
+    if (toolSpecs && toolSpecs.length > 0) {
+      // Tool-calling turns (§15) run as a bounded sequence of non-streaming rounds: the
+      // model may request an internal tool, which is executed and fed back as a "tool"
+      // message, repeating until it answers in text or MAX_TOOL_ROUNDS is exhausted (the
+      // final round omits `tools` entirely so the model is forced to answer, guaranteeing
+      // termination). The trade-off is real and deliberate: a turn that uses a tool loses
+      // live token-by-token streaming — it's moderated and delivered as one burst instead —
+      // since there is no way to stream prose and structured tool-call JSON on the same
+      // wire without risking one being mistaken for the other.
+      let finalResult: GenerationResult | null = null;
+      const accumulatedUsage: GenerationUsage = { inputTokens: 0, outputTokens: 0 };
+
+      for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+        if (signal.aborted) {
+          finishReason = "cancelled";
           break;
         }
-        if (result.toForward) yield { type: "delta", text: result.toForward };
+        const isLastRound = round === MAX_TOOL_ROUNDS;
+        const result = await provider.generate({
+          model: model.modelKey,
+          messages: generationMessages,
+          temperature: Number(config.models!.temperature),
+          topP: Number(config.models!.topP),
+          maxOutputTokens: config.models!.maxOutputTokens,
+          tools: isLastRound ? undefined : toolSpecs,
+          signal,
+        });
+        accumulatedUsage.inputTokens += result.usage.inputTokens;
+        accumulatedUsage.outputTokens += result.usage.outputTokens;
+
+        if (result.finishReason === "tool_calls" && result.toolCalls?.length && !isLastRound) {
+          generationMessages = [...generationMessages, { role: "assistant", content: result.content, toolCalls: result.toolCalls }];
+          for (const call of result.toolCalls) {
+            const toolResultContent = await executeToolCallForPipeline(
+              call,
+              { userId, conversationId: conversation.id, toolId: tool.id },
+              allowedToolNames,
+              config.safetyPolicies?.confirmationsRequired ?? [],
+            );
+            generationMessages = [...generationMessages, { role: "tool", content: toolResultContent, toolCallId: call.id }];
+          }
+          continue;
+        }
+
+        finalResult = result;
+        break;
       }
-      if (chunk.done) {
-        finishReason = chunk.finishReason ?? "stop";
-        if (chunk.usage) usage = chunk.usage;
+
+      if (finishReason !== "cancelled") {
+        usage = accumulatedUsage;
+        if (finalResult) {
+          fullText = finalResult.content;
+          finishReason = finalResult.finishReason;
+        }
+        pendingWindow = fullText;
+        const result = await checkWindow(true);
+        if (result.blocked) {
+          blockedDuringStream = true;
+        } else if (result.toForward) {
+          yield { type: "delta", text: result.toForward };
+        }
       }
-    }
-    if (!blockedDuringStream) {
-      const result = await checkWindow(true);
-      if (result.blocked) {
-        blockedDuringStream = true;
-      } else if (result.toForward) {
-        yield { type: "delta", text: result.toForward };
+    } else {
+      for await (const chunk of provider.stream({
+        model: model.modelKey,
+        messages: generationMessages,
+        temperature: Number(config.models!.temperature),
+        topP: Number(config.models!.topP),
+        maxOutputTokens: config.models!.maxOutputTokens,
+        signal,
+      })) {
+        if (signal.aborted) {
+          finishReason = "cancelled";
+          break;
+        }
+        if (chunk.delta) {
+          fullText += chunk.delta;
+          pendingWindow += chunk.delta;
+          const result = await checkWindow(false);
+          if (result.blocked) {
+            blockedDuringStream = true;
+            break;
+          }
+          if (result.toForward) yield { type: "delta", text: result.toForward };
+        }
+        if (chunk.done) {
+          finishReason = chunk.finishReason ?? "stop";
+          if (chunk.usage) usage = chunk.usage;
+        }
+      }
+      if (!blockedDuringStream) {
+        const result = await checkWindow(true);
+        if (result.blocked) {
+          blockedDuringStream = true;
+        } else if (result.toForward) {
+          yield { type: "delta", text: result.toForward };
+        }
       }
     }
   } catch (error) {
@@ -344,7 +458,6 @@ export async function* sendMessage(params: SendMessageParams): AsyncGenerator<St
   yield* generateReply({
     ctx,
     userId: params.userId,
-    userMessageId: userMessage.id,
     userMessageContent: params.content,
     signal: params.signal,
     // userMessage.id is freshly inserted above, unique to this call — stable across a retry
@@ -379,7 +492,6 @@ export async function* regenerateResponse(params: RegenerateParams): AsyncGenera
   yield* generateReply({
     ctx,
     userId: params.userId,
-    userMessageId: anchor.id,
     userMessageContent: anchor.content,
     signal: params.signal,
     // target.id identifies which specific assistant message the regenerate click targeted.

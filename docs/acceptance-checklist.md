@@ -86,3 +86,32 @@ Resumen de pruebas automatizadas ejecutadas en esta verificación:
 - **#3 (`vercel dev`)**: no verificable en este sandbox por ausencia del CLI de Vercel y credenciales. El resto de criterios de build/lint/typecheck/dev sí se verificaron con comandos reales.
 - El conjunto de pruebas unitarias (`tests/unit/`) es deliberadamente pequeño (2 archivos): la mayor parte de la cobertura funcional vive en integración (contra Postgres real) y E2E (contra un servidor real), que es donde este proyecto concentra las aserciones de comportamiento real en vez de mocks.
 - Ninguna prueba usa mocks de red: todas corren contra Postgres real y, cuando aplica, un servidor Next.js real (`next start`) — los "proveedores fake" son proveedores de dominio determinista (mismo contrato que un proveedor real), no mocks de HTTP.
+
+## Correcciones posteriores a partir de una revisión externa (2026-07-26)
+
+Una revisión externa del repositorio (basada en lectura estática, sin poder clonar/ejecutar el
+proyecto) señaló varios hallazgos. Cada uno se verificó contra el código real antes de corregirlo:
+
+- **Bucle de "function calling" para herramientas internas (§15) inexistente**: `executeInternalTool`
+  no era llamado desde ningún punto del código (ni pipeline, ni rutas, ni pruebas) — un hallazgo
+  real, más severo de lo que la propia revisión describía. Se implementó un bucle real y acotado
+  (`MAX_TOOL_ROUNDS`) en `lib/conversations/pipeline.ts`: el modelo puede pedir una herramienta,
+  se ejecuta vía `executeInternalTool`, y el resultado se reincorpora a la conversación antes de la
+  respuesta final. Extendidos `lib/ai/types.ts` (tools/toolCalls), el proveedor fake (para
+  poder probarlo sin red) y el proveedor `openai-compatible` (soporte real de `tools`/`tool_calls`,
+  streaming incluido). Se añadió el control de acceso `safetyPolicies.allowedInternalTools` a la UI
+  de administración (antes se guardaba siempre como `[]`, por lo que ningún admin podía habilitarlo
+  desde el panel aunque el backend ya existiera). Probado en `tests/integration/tool-calling.test.ts`.
+- **Clave de idempotencia con `randomUUID()`**: anulaba la deduplicación de `reserveUsage` en cada
+  intento. Corregido con una clave estable derivada del mensaje/intento correspondiente; regresión
+  cubierta en `tests/integration/conversation-pipeline.test.ts`.
+- **Sin CI**: no existía `.github/workflows`. Se añadió `.github/workflows/ci.yml` (lint, typecheck,
+  unit, integración con Postgres real, E2E/seguridad/accesibilidad, rendimiento no bloqueante). Nota:
+  que un check sea "requerido" para mergear es una regla de branch protection en Settings, no algo
+  que un workflow pueda fijar por sí mismo.
+- **Contradicción de documentación**: `docs/deployment-vercel.md` describía el bloqueo de proveedores
+  fake en producción como una simple advertencia; el comportamiento real (`scripts/verify-env.ts`) es
+  un fallo bloqueante. Corregido el texto.
+- **Fecha "futura" en este documento**: la revisión asumió que la fecha actual era 2026-07-25 y marcó
+  el timestamp `2026-07-26` de este archivo como sospechoso. Verificado con el reloj del sistema
+  (`date -u`) en el momento de esa verificación: 2026-07-26 era la fecha correcta.
