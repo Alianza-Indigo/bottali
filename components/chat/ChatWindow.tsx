@@ -318,7 +318,7 @@ export function ChatWindow({
           </ul>
         )}
         {pendingConfirmation && (
-          <Alert tone="warning" className="mt-4">
+          <Alert tone="warning" className="mt-4" data-testid="tool-confirmation-card">
             <p className="font-medium">El asistente quiere usar una herramienta</p>
             <p className="mt-1 text-ink-muted">
               Herramienta: <span className="font-mono">{pendingConfirmation.toolName}</span>

@@ -33,8 +33,9 @@ test("un usuario ve la tarjeta de confirmación y al aprobarla la herramienta se
   await chatInput.fill('HERRAMIENTA:calculator {"expression":"6*7"}');
   await page.getByRole("button", { name: "Enviar" }).click();
 
-  await expect(page.getByText("El asistente quiere usar una herramienta")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText("calculator", { exact: false })).toBeVisible();
+  const confirmationCard = page.getByTestId("tool-confirmation-card");
+  await expect(confirmationCard).toBeVisible({ timeout: 15_000 });
+  await expect(confirmationCard.getByText("calculator", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Aprobar" }).click();
   await expect(page.getByText(/42/)).toBeVisible({ timeout: 15_000 });
