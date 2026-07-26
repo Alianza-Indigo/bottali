@@ -21,15 +21,27 @@ async function getOwnedConversation(conversationId: string, userId: string) {
   return conversation;
 }
 
-export async function listConversations(userId: string, options: { toolId?: string; status?: "ACTIVE" | "ARCHIVED" } = {}) {
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+
+/** §46 "implementa paginación": bounded and offset-based rather than an unbounded SELECT —
+ * a user with thousands of conversations must not force a single query to return them all. */
+export async function listConversations(
+  userId: string,
+  options: { toolId?: string; status?: "ACTIVE" | "ARCHIVED"; limit?: number; offset?: number } = {},
+) {
   const filters = [eq(conversations.userId, userId), isNull(conversations.deletedAt)];
   if (options.toolId) filters.push(eq(conversations.toolId, options.toolId));
   if (options.status) filters.push(eq(conversations.status, options.status));
+  const limit = Math.min(options.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+  const offset = Math.max(options.offset ?? 0, 0);
   return db
     .select()
     .from(conversations)
     .where(and(...filters))
-    .orderBy(desc(conversations.lastMessageAt));
+    .orderBy(desc(conversations.lastMessageAt))
+    .limit(limit)
+    .offset(offset);
 }
 
 export async function getConversationWithMessages(conversationId: string, userId: string) {

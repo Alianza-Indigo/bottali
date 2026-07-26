@@ -49,7 +49,8 @@ export default async function ToolChatPage({ params }: { params: Promise<{ slug:
     .select({ id: conversations.id, title: conversations.title, lastMessageAt: conversations.lastMessageAt })
     .from(conversations)
     .where(and(eq(conversations.userId, user.id), eq(conversations.toolId, tool.id), eq(conversations.status, "ACTIVE")))
-    .orderBy(desc(conversations.lastMessageAt));
+    .orderBy(desc(conversations.lastMessageAt))
+    .limit(50);
 
   // Voice is only ever offered when BOTH the platform has a real provider configured
   // (isVoiceEnabled) AND this specific tool's version enabled it (§16: "no muestres voces

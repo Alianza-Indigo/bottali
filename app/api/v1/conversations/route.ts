@@ -15,7 +15,14 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const toolId = url.searchParams.get("toolId") ?? undefined;
     const status = url.searchParams.get("status") as "ACTIVE" | "ARCHIVED" | null;
-    const conversations = await listConversations(user.id, { toolId, status: status ?? undefined });
+    const limitParam = url.searchParams.get("limit");
+    const offsetParam = url.searchParams.get("offset");
+    const conversations = await listConversations(user.id, {
+      toolId,
+      status: status ?? undefined,
+      limit: limitParam ? Number(limitParam) : undefined,
+      offset: offsetParam ? Number(offsetParam) : undefined,
+    });
     return NextResponse.json({ conversations });
   } catch (error) {
     return handleApiError(error);
