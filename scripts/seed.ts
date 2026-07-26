@@ -5,6 +5,7 @@ import { getEnv } from "@/lib/env";
 import { seedRolesAndPermissions } from "@/lib/permissions/seed-rbac";
 import { syncProvidersFromEnv } from "@/lib/ai/sync-providers";
 import { seedDefaultLegalDocuments } from "@/lib/legal/seed-legal";
+import { seedBootstrapSuperAdmin } from "@/db/seed/bootstrap-admin";
 import { seedDemoData } from "@/db/seed/demo";
 
 async function main() {
@@ -18,6 +19,9 @@ async function main() {
 
   console.log("Verificando aviso de privacidad publicado ...");
   await seedDefaultLegalDocuments(db);
+
+  console.log("Asegurando cuenta SUPER_ADMIN inicial ...");
+  await seedBootstrapSuperAdmin(db);
 
   if (env.APP_ENV === "production") {
     console.log("APP_ENV=production: se omiten los datos de demostración.");
