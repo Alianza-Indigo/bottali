@@ -40,6 +40,20 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
+  // instrumentation.ts (§35 OpenTelemetry, conditional on OTEL_EXPORTER_OTLP_ENDPOINT) and
+  // Sentry (conditional on SENTRY_DSN) are Node-only server code with native dependencies —
+  // excluding them from webpack bundling makes Next require() them natively at runtime
+  // instead, which is the standard fix for this class of package with Next.js.
+  serverExternalPackages: [
+    "@opentelemetry/sdk-trace-node",
+    "@opentelemetry/sdk-trace-base",
+    "@opentelemetry/sdk-trace",
+    "@opentelemetry/exporter-trace-otlp-http",
+    "@opentelemetry/instrumentation-http",
+    "@opentelemetry/instrumentation-pg",
+    "@opentelemetry/instrumentation",
+    "@sentry/node",
+  ],
   async headers() {
     return [
       {

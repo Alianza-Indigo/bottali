@@ -30,4 +30,16 @@ test.describe("Cabeceras de seguridad", () => {
     const res = await request.get("/api/v1/catalog/00000000-0000-0000-0000-000000000000/manifest");
     expect(res.status()).toBe(401);
   });
+
+  test("health/live y health/ready son públicos, health/dependencies exige permisos de admin", async ({ request }) => {
+    expect((await request.get("/api/v1/health/live")).status()).toBe(200);
+    expect([200, 503]).toContain((await request.get("/api/v1/health/ready")).status());
+    expect((await request.get("/api/v1/health/dependencies")).status()).toBe(401);
+  });
+
+  test("cada respuesta incluye un x-request-id consistente con la cabecera de la petición", async ({ request }) => {
+    const requestId = "test-correlation-id-12345";
+    const res = await request.get("/api/v1/health/live", { headers: { "x-request-id": requestId } });
+    expect(res.headers()["x-request-id"]).toBe(requestId);
+  });
 });

@@ -1,8 +1,9 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db/client";
 import { auditEvents, securityEvents } from "@/db/schema";
 import { getRequestMetadata } from "@/lib/auth/session";
+import { getCurrentRequestId } from "@/lib/observability/request-context";
+import { logger } from "@/lib/observability/logger";
 
 export interface AuditEventInput {
   actorId?: string | null;
@@ -24,6 +25,7 @@ export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
     ipTruncated: null,
     userAgent: null,
   }));
+  const correlationId = input.correlationId ?? (await getCurrentRequestId());
   await db.insert(auditEvents).values({
     actorId: input.actorId ?? null,
     action: input.action,
@@ -33,8 +35,15 @@ export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
     reason: input.reason,
     ipTruncated,
     userAgent,
-    correlationId: input.correlationId ?? randomUUID(),
+    correlationId,
     metadata: input.metadata ?? {},
+  });
+  logger.info("audit_event", {
+    requestId: correlationId,
+    action: input.action,
+    resourceType: input.resourceType,
+    resourceId: input.resourceId,
+    result: input.result ?? "SUCCESS",
   });
 }
 
@@ -47,11 +56,17 @@ export interface SecurityEventInput {
 
 export async function recordSecurityEvent(input: SecurityEventInput): Promise<void> {
   const { ipTruncated } = await getRequestMetadata().catch(() => ({ ipTruncated: null }));
+  const severity = input.severity ?? "INFO";
   await db.insert(securityEvents).values({
     kind: input.kind,
-    severity: input.severity ?? "INFO",
+    severity,
     userId: input.userId ?? null,
     ipTruncated,
     details: input.details ?? {},
   });
+  // §35 "alertas": WARNING/CRITICAL security events log at elevated level — the admin
+  // security feed plus (when SENTRY_DSN is set) Sentry are what stand in for a real
+  // external alerting channel here.
+  const logFn = severity === "CRITICAL" ? logger.error : severity === "WARNING" ? logger.warn : logger.info;
+  logFn("security_event", { kind: input.kind, severity, userId: input.userId });
 }
