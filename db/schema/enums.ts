@@ -142,3 +142,10 @@ export const fileStatusEnum = pgEnum("file_status", [
 ]);
 
 export const riskLevelEnum = pgEnum("risk_level", ["LOW", "MEDIUM", "HIGH"]);
+
+export const toolCallConfirmationStatusEnum = pgEnum("tool_call_confirmation_status", [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "EXPIRED",
+]);

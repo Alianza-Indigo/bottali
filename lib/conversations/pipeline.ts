@@ -1,18 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { conversations, knowledgeBases, messages, providerModels, tools } from "@/db/schema";
+import { conversations, knowledgeBases, messages, providerModels, toolCallConfirmations, tools } from "@/db/schema";
 import type { FullVersionConfig } from "@/lib/tools/repository";
 import { canUserAccessTool } from "@/lib/tools/access";
 import { loadVersionConfig } from "@/lib/tools/repository";
 import { getLLMProvider, getModerationProvider } from "@/lib/ai/registry";
 import { estimateCostCents } from "@/lib/ai/usage/cost";
-import type { GenerationMessage, GenerationResult, GenerationUsage } from "@/lib/ai/types";
+import type { GenerationMessage, GenerationResult, GenerationUsage, LLMProvider, ToolCall, ToolSpec } from "@/lib/ai/types";
 import { INTERNAL_TOOLS, getInternalTool, listToolSpecsForLLM } from "@/lib/ai/tools/registry";
 import { executeInternalTool } from "@/lib/ai/tools/execute";
 import { reconcileUsage, releaseReservation, reserveUsage } from "./limits";
 import { recordMemoryTurn, retrieveMemory } from "./memory";
 import { maybeGenerateTitle } from "./service";
+import { computeConfirmationExpiry, expirePendingConfirmationsForConversation, expireSingleConfirmation } from "./tool-confirmations";
 import { retrieveRelevantChunks, buildKnowledgeContextBlock } from "@/lib/knowledge/retrieval";
 import { recordAuditEvent } from "@/lib/audit/log";
 import { AppError, BudgetExceededError, ForbiddenError, NotFoundError, RateLimitError } from "@/lib/utils/errors";
@@ -21,7 +22,8 @@ export type StreamEvent =
   | { type: "delta"; text: string }
   | { type: "done"; messageId: string; finishReason: string }
   | { type: "blocked"; reason: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "confirmation_required"; confirmationId: string; toolName: string; arguments: string };
 
 const HISTORY_MESSAGE_LIMIT = 20;
 /** Bounds the §15 tool-calling loop: the model gets this many rounds to request an
@@ -91,26 +93,27 @@ async function resolveGenerationContext(conversationId: string, userId: string):
   return { conversation, tool, config: config as ResolvedContext["config"], model };
 }
 
+function resolveAllowedToolNames(config: ResolvedContext["config"]): string[] {
+  return config.capabilities?.internalTools && config.safetyPolicies
+    ? config.safetyPolicies.allowedInternalTools.filter((name) => name in INTERNAL_TOOLS)
+    : [];
+}
+
 /**
- * Runs one model-requested tool call (§15) and returns the string to feed back as the
- * "tool" role message content. Never throws: a bad tool name, invalid/malformed JSON
- * arguments, a tool requiring human confirmation (no confirmation UI exists yet, so those
- * are refused rather than silently auto-approved), or an execution error all become a
- * `{"error": "..."}` result instead — the model sees the failure and can recover (retry
- * differently, or just answer without the tool) instead of the whole turn crashing.
+ * Executes a tool call unconditionally — confirmation gating happens in runToolRoundLoop
+ * BEFORE this is ever called, so by the time this runs the call is already known-approved.
+ * Never throws: a bad tool name, invalid/malformed JSON arguments, or an execution error all
+ * become a `{"error": "..."}` result instead — the model sees the failure and can recover
+ * (retry differently, or just answer without the tool) instead of the whole turn crashing.
  */
 async function executeToolCallForPipeline(
   call: { name: string; arguments: string },
   context: { userId: string; conversationId: string; toolId: string },
   allowedToolNames: string[],
-  confirmationsRequired: string[],
 ): Promise<string> {
   const definition = getInternalTool(call.name);
   if (!definition) {
     return JSON.stringify({ error: `Herramienta interna desconocida: ${call.name}` });
-  }
-  if (definition.requiresConfirmation || confirmationsRequired.includes(call.name)) {
-    return JSON.stringify({ error: "Esta herramienta requiere confirmación humana y no puede ejecutarse automáticamente en esta conversación." });
   }
 
   let parsedInput: unknown;
@@ -126,6 +129,235 @@ async function executeToolCallForPipeline(
   } catch (error) {
     return JSON.stringify({ error: error instanceof Error ? error.message : "La herramienta interna falló al ejecutarse." });
   }
+}
+
+function toolNeedsConfirmation(toolName: string, confirmationsRequired: string[]): boolean {
+  const definition = getInternalTool(toolName);
+  return Boolean(definition?.requiresConfirmation) || confirmationsRequired.includes(toolName);
+}
+
+async function moderateFinalText(text: string, outputModerationEnabled: boolean): Promise<{ blocked: boolean; moderationResult: unknown }> {
+  if (!text || !outputModerationEnabled) return { blocked: false, moderationResult: null };
+  const moderation = await getModerationProvider().evaluate({ text });
+  return { blocked: moderation.flagged, moderationResult: moderation };
+}
+
+type ToolRoundLoopOutcome =
+  | {
+      kind: "final";
+      generationMessages: GenerationMessage[];
+      accumulatedUsage: GenerationUsage;
+      accumulatedLatencyMs: number;
+      finalResult: GenerationResult | null;
+      cancelled: boolean;
+    }
+  | {
+      kind: "confirmation_required";
+      generationMessages: GenerationMessage[];
+      accumulatedUsage: GenerationUsage;
+      accumulatedLatencyMs: number;
+      round: number;
+      call: ToolCall;
+      /** Tool calls from the SAME round as `call`, positioned after it, not yet processed. */
+      remainingCalls: ToolCall[];
+    };
+
+interface ToolRoundLoopParams {
+  provider: LLMProvider;
+  modelKey: string;
+  temperature: number;
+  topP: number;
+  maxOutputTokens: number;
+  signal: AbortSignal;
+  context: { userId: string; conversationId: string; toolId: string };
+  allowedToolNames: string[];
+  confirmationsRequired: string[];
+  toolSpecs: ToolSpec[];
+  generationMessages: GenerationMessage[];
+  round: number;
+  accumulatedUsage: GenerationUsage;
+  accumulatedLatencyMs: number;
+  /** When resuming after a confirmation, the calls still owed from that same round. */
+  pendingCalls?: ToolCall[];
+}
+
+/**
+ * §15 core tool-calling loop: the model may request a tool, which is executed and fed back
+ * as a "tool" message, repeating until it answers in text or MAX_TOOL_ROUNDS is exhausted
+ * (the final round omits `tools`, forcing an answer). Pausable: if a requested tool needs
+ * human confirmation, the loop stops mid-round and returns everything needed to resume it
+ * later. This function has no side effects beyond the LLM/tool calls themselves — no DB
+ * writes — so it's identically safe to run from a fresh start (round 0) or from a persisted
+ * snapshot (resumeAfterToolConfirmation).
+ */
+async function runToolRoundLoop(p: ToolRoundLoopParams): Promise<ToolRoundLoopOutcome> {
+  let generationMessages = p.generationMessages;
+  const accumulatedUsage: GenerationUsage = { ...p.accumulatedUsage };
+  let round = p.round;
+  let pendingCalls = p.pendingCalls ?? null;
+  const enteredAt = Date.now();
+
+  const latencySoFar = () => p.accumulatedLatencyMs + (Date.now() - enteredAt);
+
+  for (;;) {
+    if (p.signal.aborted) {
+      return { kind: "final", generationMessages, accumulatedUsage, accumulatedLatencyMs: latencySoFar(), finalResult: null, cancelled: true };
+    }
+
+    let toolCallsToProcess: ToolCall[];
+    if (pendingCalls) {
+      toolCallsToProcess = pendingCalls;
+      pendingCalls = null;
+    } else {
+      const isLastRound = round === MAX_TOOL_ROUNDS;
+      const result = await p.provider.generate({
+        model: p.modelKey,
+        messages: generationMessages,
+        temperature: p.temperature,
+        topP: p.topP,
+        maxOutputTokens: p.maxOutputTokens,
+        tools: isLastRound ? undefined : p.toolSpecs,
+        signal: p.signal,
+      });
+      accumulatedUsage.inputTokens += result.usage.inputTokens;
+      accumulatedUsage.outputTokens += result.usage.outputTokens;
+
+      if (!(result.finishReason === "tool_calls" && result.toolCalls?.length && !isLastRound)) {
+        return { kind: "final", generationMessages, accumulatedUsage, accumulatedLatencyMs: latencySoFar(), finalResult: result, cancelled: false };
+      }
+
+      generationMessages = [...generationMessages, { role: "assistant", content: result.content, toolCalls: result.toolCalls }];
+      toolCallsToProcess = result.toolCalls;
+    }
+
+    for (let i = 0; i < toolCallsToProcess.length; i += 1) {
+      const call = toolCallsToProcess[i]!;
+      if (toolNeedsConfirmation(call.name, p.confirmationsRequired)) {
+        return {
+          kind: "confirmation_required",
+          generationMessages,
+          accumulatedUsage,
+          accumulatedLatencyMs: latencySoFar(),
+          round,
+          call,
+          remainingCalls: toolCallsToProcess.slice(i + 1),
+        };
+      }
+      const toolResultContent = await executeToolCallForPipeline(call, p.context, p.allowedToolNames);
+      generationMessages = [...generationMessages, { role: "tool", content: wrapToolResultForModel(toolResultContent), toolCallId: call.id }];
+    }
+
+    round += 1;
+  }
+}
+
+interface FinalizeParams {
+  conversation: typeof conversations.$inferSelect;
+  tool: typeof tools.$inferSelect;
+  model: typeof providerModels.$inferSelect;
+  config: ResolvedContext["config"];
+  providerKey: string;
+  userId: string;
+  userMessageContent: string;
+  reservationId: string;
+  cancelled: boolean;
+  fullText: string;
+  finishReason: string;
+  usage: GenerationUsage;
+  latencyMs: number;
+  moderationResult: unknown;
+  blocked: boolean;
+}
+
+/**
+ * §12 steps 18–25: persists the final message, reconciles usage/cost, updates the
+ * conversation, records memory/audit, and yields the terminal StreamEvent. Shared by every
+ * path that can produce a final answer — fresh streaming turns, fresh tool-calling turns,
+ * and turns resumed after a human confirmation — so they can never drift apart on how a
+ * turn actually ends.
+ */
+async function* finalizeGeneration(p: FinalizeParams): AsyncGenerator<StreamEvent> {
+  const { conversation, tool, model, config, providerKey, userId, userMessageContent, reservationId } = p;
+
+  if (p.cancelled) {
+    await releaseReservation(reservationId);
+    const [cancelledMessage] = await db
+      .insert(messages)
+      .values({ conversationId: conversation.id, role: "assistant", content: p.fullText, status: "CANCELLED", finishReason: "cancelled" })
+      .returning({ id: messages.id });
+    yield { type: "done", messageId: cancelledMessage?.id ?? "", finishReason: "cancelled" };
+    return;
+  }
+
+  const finalContent = p.blocked
+    ? config.safetyPolicies?.contingencyMessage || "No es posible mostrar esta respuesta por políticas de seguridad."
+    : p.fullText;
+  const messageStatus: "COMPLETED" | "BLOCKED" = p.blocked ? "BLOCKED" : "COMPLETED";
+
+  const costCents = estimateCostCents(p.usage, {
+    inputCostPerMilleCents: Number(model.inputCostPerMilleCents),
+    outputCostPerMilleCents: Number(model.outputCostPerMilleCents),
+  });
+
+  const [assistantMessage] = await db
+    .insert(messages)
+    .values({
+      conversationId: conversation.id,
+      role: "assistant",
+      content: finalContent,
+      status: messageStatus,
+      provider: providerKey,
+      model: model.modelKey,
+      inputTokens: p.usage.inputTokens,
+      outputTokens: p.usage.outputTokens,
+      estimatedCostCents: String(costCents),
+      latencyMs: p.latencyMs,
+      finishReason: p.finishReason,
+      moderationResult: p.moderationResult ? { ...(p.moderationResult as object) } : null,
+    })
+    .returning({ id: messages.id });
+  if (!assistantMessage) throw new Error("No fue posible guardar la respuesta.");
+
+  await reconcileUsage({
+    reservationId,
+    userId,
+    toolId: tool.id,
+    conversationId: conversation.id,
+    messageId: assistantMessage.id,
+    provider: providerKey,
+    model: model.modelKey,
+    inputTokens: p.usage.inputTokens,
+    outputTokens: p.usage.outputTokens,
+    costCents,
+  });
+
+  await db.update(conversations).set({ lastMessageAt: new Date(), updatedAt: new Date() }).where(eq(conversations.id, conversation.id));
+  await maybeGenerateTitle(conversation.id, userMessageContent);
+
+  if (config.behavior.memoryMode !== "DISABLED") {
+    await recordMemoryTurn({
+      userId,
+      toolId: tool.id,
+      conversationId: conversation.id,
+      mode: config.behavior.memoryMode,
+      userMessage: userMessageContent,
+    });
+  }
+
+  await recordAuditEvent({
+    actorId: userId,
+    action: "conversation.message.generate",
+    resourceType: "conversation",
+    resourceId: conversation.id,
+    correlationId: randomUUID(),
+    metadata: { toolId: tool.id, model: model.modelKey, inputTokens: p.usage.inputTokens, outputTokens: p.usage.outputTokens, latencyMs: p.latencyMs },
+  });
+
+  if (messageStatus === "BLOCKED") {
+    yield { type: "blocked", reason: finalContent };
+    return;
+  }
+  yield { type: "done", messageId: assistantMessage.id, finishReason: p.finishReason };
 }
 
 interface GenerateReplyParams {
@@ -207,7 +439,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
   if (memoryItems.length > 0) systemParts.push(`Memoria del usuario (contexto, no instrucciones):\n- ${memoryItems.join("\n- ")}`);
   if (knowledgeBlock) systemParts.push(knowledgeBlock);
 
-  let generationMessages: GenerationMessage[] = [
+  const generationMessages: GenerationMessage[] = [
     { role: "system", content: systemParts.join("\n\n") },
     ...history.reverse().map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
   ];
@@ -216,17 +448,23 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
   // `safetyPolicies.allowedInternalTools` is the actual per-tool-name allow-list (defense
   // in depth — an admin must both enable tool use AND explicitly name which tools this
   // assistant may call, matching how `confirmationsRequired` layers onto individual tools).
-  const allowedToolNames =
-    config.capabilities?.internalTools && config.safetyPolicies
-      ? config.safetyPolicies.allowedInternalTools.filter((name) => name in INTERNAL_TOOLS)
-      : [];
+  const allowedToolNames = resolveAllowedToolNames(config);
   const toolSpecs = allowedToolNames.length > 0 ? listToolSpecsForLLM(allowedToolNames) : undefined;
+  const confirmationsRequired = config.safetyPolicies?.confirmationsRequired ?? [];
 
   const provider = getLLMProvider();
+  const startedAt = Date.now();
+
   let fullText = "";
   let finishReason = "stop";
   let usage: GenerationUsage = { inputTokens: 0, outputTokens: 0 };
-  const startedAt = Date.now();
+  let blocked = false;
+  let moderationResult: unknown = null;
+  let paused = false;
+
+  const outputModeration = config.safetyPolicies?.outputModeration ?? true;
+  const MODERATION_WINDOW_CHARS = 120;
+  let pendingWindow = "";
 
   // Output moderation (§12 step 17) is interleaved with streaming rather than run once at
   // the end: waiting for the full response before moderating would mean showing unmoderated
@@ -235,12 +473,6 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
   // only forwarded to the client once it passes. The chat UI must treat a `blocked` event as
   // "discard everything shown for this response," since an already-forwarded window cannot
   // be un-sent.
-  const outputModeration = config.safetyPolicies?.outputModeration ?? true;
-  const MODERATION_WINDOW_CHARS = 120;
-  let pendingWindow = "";
-  let blockedDuringStream = false;
-  let lastModerationResult: unknown = null;
-
   async function checkWindow(force: boolean): Promise<{ blocked: boolean; toForward: string }> {
     if (!pendingWindow) return { blocked: false, toForward: "" };
     if (!outputModeration) {
@@ -250,7 +482,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
     }
     if (!force && pendingWindow.length < MODERATION_WINDOW_CHARS) return { blocked: false, toForward: "" };
     const moderation = await getModerationProvider().evaluate({ text: fullText });
-    lastModerationResult = moderation;
+    moderationResult = moderation;
     if (moderation.flagged) return { blocked: true, toForward: "" };
     const toForward = pendingWindow;
     pendingWindow = "";
@@ -259,68 +491,65 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
 
   try {
     if (toolSpecs && toolSpecs.length > 0) {
-      // Tool-calling turns (§15) run as a bounded sequence of non-streaming rounds: the
-      // model may request an internal tool, which is executed and fed back as a "tool"
-      // message, repeating until it answers in text or MAX_TOOL_ROUNDS is exhausted (the
-      // final round omits `tools` entirely so the model is forced to answer, guaranteeing
-      // termination). The trade-off is real and deliberate: a turn that uses a tool loses
-      // live token-by-token streaming — it's moderated and delivered as one burst instead —
-      // since there is no way to stream prose and structured tool-call JSON on the same
-      // wire without risking one being mistaken for the other.
-      let finalResult: GenerationResult | null = null;
-      const accumulatedUsage: GenerationUsage = { inputTokens: 0, outputTokens: 0 };
+      // Tool-calling turns (§15) run as a bounded sequence of non-streaming rounds — see
+      // runToolRoundLoop. The trade-off is real and deliberate: a turn that uses a tool
+      // loses live token-by-token streaming (moderated and delivered as one burst instead),
+      // since tool-call JSON and visible prose can't safely share one wire.
+      const outcome = await runToolRoundLoop({
+        provider,
+        modelKey: model.modelKey,
+        temperature: Number(config.models!.temperature),
+        topP: Number(config.models!.topP),
+        maxOutputTokens: config.models!.maxOutputTokens,
+        signal,
+        context: { userId, conversationId: conversation.id, toolId: tool.id },
+        allowedToolNames,
+        confirmationsRequired,
+        toolSpecs,
+        generationMessages,
+        round: 0,
+        accumulatedUsage: { inputTokens: 0, outputTokens: 0 },
+        accumulatedLatencyMs: 0,
+      });
 
-      for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
-        if (signal.aborted) {
+      if (outcome.kind === "confirmation_required") {
+        const [row] = await db
+          .insert(toolCallConfirmations)
+          .values({
+            conversationId: conversation.id,
+            userId,
+            toolId: tool.id,
+            reservationId,
+            toolCallId: outcome.call.id,
+            toolName: outcome.call.name,
+            argumentsJson: outcome.call.arguments,
+            generationStateSnapshot: {
+              generationMessages: outcome.generationMessages,
+              round: outcome.round,
+              accumulatedUsage: outcome.accumulatedUsage,
+              accumulatedLatencyMs: outcome.accumulatedLatencyMs,
+              userMessageContent,
+              remainingCalls: outcome.remainingCalls,
+            },
+            expiresAt: computeConfirmationExpiry(),
+          })
+          .returning({ id: toolCallConfirmations.id });
+        if (!row) throw new Error("No fue posible registrar la confirmación pendiente.");
+        yield { type: "confirmation_required", confirmationId: row.id, toolName: outcome.call.name, arguments: outcome.call.arguments };
+        paused = true;
+      } else {
+        usage = outcome.accumulatedUsage;
+        if (outcome.cancelled) {
           finishReason = "cancelled";
-          break;
-        }
-        const isLastRound = round === MAX_TOOL_ROUNDS;
-        const result = await provider.generate({
-          model: model.modelKey,
-          messages: generationMessages,
-          temperature: Number(config.models!.temperature),
-          topP: Number(config.models!.topP),
-          maxOutputTokens: config.models!.maxOutputTokens,
-          tools: isLastRound ? undefined : toolSpecs,
-          signal,
-        });
-        accumulatedUsage.inputTokens += result.usage.inputTokens;
-        accumulatedUsage.outputTokens += result.usage.outputTokens;
-
-        if (result.finishReason === "tool_calls" && result.toolCalls?.length && !isLastRound) {
-          generationMessages = [...generationMessages, { role: "assistant", content: result.content, toolCalls: result.toolCalls }];
-          for (const call of result.toolCalls) {
-            const toolResultContent = await executeToolCallForPipeline(
-              call,
-              { userId, conversationId: conversation.id, toolId: tool.id },
-              allowedToolNames,
-              config.safetyPolicies?.confirmationsRequired ?? [],
-            );
-            generationMessages = [
-              ...generationMessages,
-              { role: "tool", content: wrapToolResultForModel(toolResultContent), toolCallId: call.id },
-            ];
+        } else {
+          if (outcome.finalResult) {
+            fullText = outcome.finalResult.content;
+            finishReason = outcome.finalResult.finishReason;
           }
-          continue;
-        }
-
-        finalResult = result;
-        break;
-      }
-
-      if (finishReason !== "cancelled") {
-        usage = accumulatedUsage;
-        if (finalResult) {
-          fullText = finalResult.content;
-          finishReason = finalResult.finishReason;
-        }
-        pendingWindow = fullText;
-        const result = await checkWindow(true);
-        if (result.blocked) {
-          blockedDuringStream = true;
-        } else if (result.toForward) {
-          yield { type: "delta", text: result.toForward };
+          const modResult = await moderateFinalText(fullText, outputModeration);
+          blocked = modResult.blocked;
+          moderationResult = modResult.moderationResult;
+          if (!blocked && fullText) yield { type: "delta", text: fullText };
         }
       }
     } else {
@@ -341,7 +570,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
           pendingWindow += chunk.delta;
           const result = await checkWindow(false);
           if (result.blocked) {
-            blockedDuringStream = true;
+            blocked = true;
             break;
           }
           if (result.toForward) yield { type: "delta", text: result.toForward };
@@ -351,13 +580,10 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
           if (chunk.usage) usage = chunk.usage;
         }
       }
-      if (!blockedDuringStream) {
+      if (!blocked) {
         const result = await checkWindow(true);
-        if (result.blocked) {
-          blockedDuringStream = true;
-        } else if (result.toForward) {
-          yield { type: "delta", text: result.toForward };
-        }
+        if (result.blocked) blocked = true;
+        else if (result.toForward) yield { type: "delta", text: result.toForward };
       }
     }
   } catch (error) {
@@ -367,91 +593,38 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
     return;
   }
 
-  if (signal.aborted || finishReason === "cancelled") {
-    await releaseReservation(reservationId);
-    const [cancelledMessage] = await db
-      .insert(messages)
-      .values({ conversationId: conversation.id, role: "assistant", content: fullText, status: "CANCELLED", finishReason: "cancelled" })
-      .returning({ id: messages.id });
-    yield { type: "done", messageId: cancelledMessage?.id ?? "", finishReason: "cancelled" };
-    return;
-  }
+  if (paused) return;
 
-  const finalContent = blockedDuringStream
-    ? config.safetyPolicies?.contingencyMessage || "No es posible mostrar esta respuesta por políticas de seguridad."
-    : fullText;
-  const messageStatus: "COMPLETED" | "BLOCKED" = blockedDuringStream ? "BLOCKED" : "COMPLETED";
+  const cancelled = signal.aborted || finishReason === "cancelled";
 
-  const latencyMs = Date.now() - startedAt;
-  const costCents = estimateCostCents(usage, {
-    inputCostPerMilleCents: Number(model.inputCostPerMilleCents),
-    outputCostPerMilleCents: Number(model.outputCostPerMilleCents),
-  });
-
-  const [assistantMessage] = await db
-    .insert(messages)
-    .values({
-      conversationId: conversation.id,
-      role: "assistant",
-      content: finalContent,
-      status: messageStatus,
-      provider: provider.key,
-      model: model.modelKey,
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      estimatedCostCents: String(costCents),
-      latencyMs,
-      finishReason,
-      moderationResult: lastModerationResult ? { ...(lastModerationResult as object) } : null,
-    })
-    .returning({ id: messages.id });
-  if (!assistantMessage) throw new Error("No fue posible guardar la respuesta.");
-
-  await reconcileUsage({
-    reservationId,
+  yield* finalizeGeneration({
+    conversation,
+    tool,
+    model,
+    config,
+    providerKey: provider.key,
     userId,
-    toolId: tool.id,
-    conversationId: conversation.id,
-    messageId: assistantMessage.id,
-    provider: provider.key,
-    model: model.modelKey,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    costCents,
+    userMessageContent,
+    reservationId,
+    cancelled,
+    fullText,
+    finishReason,
+    usage,
+    latencyMs: Date.now() - startedAt,
+    moderationResult,
+    blocked,
   });
-
-  await db.update(conversations).set({ lastMessageAt: new Date(), updatedAt: new Date() }).where(eq(conversations.id, conversation.id));
-  await maybeGenerateTitle(conversation.id, userMessageContent);
-
-  if (config.behavior.memoryMode !== "DISABLED") {
-    await recordMemoryTurn({
-      userId,
-      toolId: tool.id,
-      conversationId: conversation.id,
-      mode: config.behavior.memoryMode,
-      userMessage: userMessageContent,
-    });
-  }
-
-  await recordAuditEvent({
-    actorId: userId,
-    action: "conversation.message.generate",
-    resourceType: "conversation",
-    resourceId: conversation.id,
-    correlationId: randomUUID(),
-    metadata: { toolId: tool.id, model: model.modelKey, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, latencyMs },
-  });
-
-  if (messageStatus === "BLOCKED") {
-    yield { type: "blocked", reason: finalContent };
-    return;
-  }
-  yield { type: "done", messageId: assistantMessage.id, finishReason };
 }
 
 /** §12 full pipeline for a new user turn: validate → moderate input → persist → generate. */
 export async function* sendMessage(params: SendMessageParams): AsyncGenerator<StreamEvent> {
   const ctx = await resolveGenerationContext(params.conversationId, params.userId);
+
+  // Flexible-by-design (§15): a pending confirmation on this conversation never blocks the
+  // user from sending a new message — but the conversation has moved on, so that old pending
+  // call is no longer relevant to resume and its reservation is released now instead of
+  // sitting HELD until the cron sweep or its own expiry.
+  await expirePendingConfirmationsForConversation(params.conversationId);
 
   const inputModeration = ctx.config.safetyPolicies?.inputModeration ?? true;
   if (inputModeration) {
@@ -524,4 +697,147 @@ export async function* regenerateResponse(params: RegenerateParams): AsyncGenera
     idempotencyKey: `message-generation:${target.id}`,
     excludeMessageIds: [target.id],
   });
+}
+
+export interface ResolveToolConfirmationParams {
+  confirmationId: string;
+  userId: string;
+  decision: "approve" | "reject";
+  signal: AbortSignal;
+}
+
+/**
+ * §15 human-in-the-loop resume: approves or rejects a paused tool call and continues the
+ * round loop exactly where it left off, reusing the persisted generationStateSnapshot. This
+ * is deliberately a SEPARATE entry point from generateReply (not something sendMessage
+ * routes into) since it can be invoked long after the original HTTP request that paused —
+ * a human approving an action is a genuinely separate request, potentially minutes later.
+ */
+export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmationParams): AsyncGenerator<StreamEvent> {
+  const rows = await db.select().from(toolCallConfirmations).where(eq(toolCallConfirmations.id, params.confirmationId)).limit(1);
+  const confirmation = rows[0];
+  if (!confirmation) throw new NotFoundError("Confirmación no encontrada.");
+  if (confirmation.userId !== params.userId) throw new ForbiddenError("No puedes resolver esta confirmación.");
+  if (confirmation.status !== "PENDING") {
+    throw new AppError("Esta confirmación ya fue resuelta.", "CONFIRMATION_ALREADY_RESOLVED", 409);
+  }
+  if (confirmation.expiresAt.getTime() < Date.now()) {
+    await expireSingleConfirmation(confirmation.id, confirmation.reservationId);
+    throw new AppError("Esta confirmación expiró; el turno ya no puede reanudarse.", "CONFIRMATION_EXPIRED", 409);
+  }
+
+  const ctx = await resolveGenerationContext(confirmation.conversationId, params.userId);
+  const { conversation, tool, config, model } = ctx;
+  const provider = getLLMProvider();
+  const context = { userId: params.userId, conversationId: conversation.id, toolId: tool.id };
+  const call: ToolCall = { id: confirmation.toolCallId, name: confirmation.toolName, arguments: confirmation.argumentsJson };
+
+  const allowedToolNames = resolveAllowedToolNames(config);
+  const confirmationsRequired = config.safetyPolicies?.confirmationsRequired ?? [];
+  const toolSpecs = allowedToolNames.length > 0 ? listToolSpecsForLLM(allowedToolNames) : [];
+
+  const toolResultContent =
+    params.decision === "approve"
+      ? await executeToolCallForPipeline(call, context, allowedToolNames)
+      : JSON.stringify({ error: "El usuario rechazó la ejecución de esta herramienta." });
+
+  await db
+    .update(toolCallConfirmations)
+    .set({ status: params.decision === "approve" ? "APPROVED" : "REJECTED", resolvedAt: new Date() })
+    .where(eq(toolCallConfirmations.id, confirmation.id));
+
+  const snapshot = confirmation.generationStateSnapshot;
+  const generationMessages: GenerationMessage[] = [
+    // Round-tripped through jsonb, so the stored shape is only structurally typed — trust it,
+    // since nothing but runToolRoundLoop/this module ever writes a snapshot row.
+    ...(snapshot.generationMessages as GenerationMessage[]),
+    { role: "tool", content: wrapToolResultForModel(toolResultContent), toolCallId: call.id },
+  ];
+
+  const startedAt = Date.now();
+  try {
+    const outcome = await runToolRoundLoop({
+      provider,
+      modelKey: model.modelKey,
+      temperature: Number(config.models!.temperature),
+      topP: Number(config.models!.topP),
+      maxOutputTokens: config.models!.maxOutputTokens,
+      signal: params.signal,
+      context,
+      allowedToolNames,
+      confirmationsRequired,
+      toolSpecs,
+      generationMessages,
+      round: snapshot.round,
+      accumulatedUsage: snapshot.accumulatedUsage,
+      accumulatedLatencyMs: snapshot.accumulatedLatencyMs,
+      pendingCalls: snapshot.remainingCalls,
+    });
+
+    if (outcome.kind === "confirmation_required") {
+      const [row] = await db
+        .insert(toolCallConfirmations)
+        .values({
+          conversationId: conversation.id,
+          userId: params.userId,
+          toolId: tool.id,
+          reservationId: confirmation.reservationId,
+          toolCallId: outcome.call.id,
+          toolName: outcome.call.name,
+          argumentsJson: outcome.call.arguments,
+          generationStateSnapshot: {
+            generationMessages: outcome.generationMessages,
+            round: outcome.round,
+            accumulatedUsage: outcome.accumulatedUsage,
+            accumulatedLatencyMs: outcome.accumulatedLatencyMs,
+            userMessageContent: snapshot.userMessageContent,
+            remainingCalls: outcome.remainingCalls,
+          },
+          expiresAt: computeConfirmationExpiry(),
+        })
+        .returning({ id: toolCallConfirmations.id });
+      if (!row) throw new Error("No fue posible registrar la confirmación pendiente.");
+      yield { type: "confirmation_required", confirmationId: row.id, toolName: outcome.call.name, arguments: outcome.call.arguments };
+      return;
+    }
+
+    let fullText = "";
+    let finishReason = outcome.cancelled ? "cancelled" : "stop";
+    let blocked = false;
+    let moderationResult: unknown = null;
+    const outputModeration = config.safetyPolicies?.outputModeration ?? true;
+
+    if (!outcome.cancelled) {
+      if (outcome.finalResult) {
+        fullText = outcome.finalResult.content;
+        finishReason = outcome.finalResult.finishReason;
+      }
+      const modResult = await moderateFinalText(fullText, outputModeration);
+      blocked = modResult.blocked;
+      moderationResult = modResult.moderationResult;
+      if (!blocked && fullText) yield { type: "delta", text: fullText };
+    }
+
+    yield* finalizeGeneration({
+      conversation,
+      tool,
+      model,
+      config,
+      providerKey: provider.key,
+      userId: params.userId,
+      userMessageContent: snapshot.userMessageContent,
+      reservationId: confirmation.reservationId,
+      cancelled: params.signal.aborted || finishReason === "cancelled",
+      fullText,
+      finishReason,
+      usage: outcome.accumulatedUsage,
+      latencyMs: outcome.accumulatedLatencyMs + (Date.now() - startedAt),
+      moderationResult,
+      blocked,
+    });
+  } catch (error) {
+    await releaseReservation(confirmation.reservationId);
+    await db.insert(messages).values({ conversationId: conversation.id, role: "assistant", content: "", status: "FAILED", finishReason: "error" });
+    yield { type: "error", message: error instanceof Error ? error.message : "Error al generar la respuesta." };
+  }
 }

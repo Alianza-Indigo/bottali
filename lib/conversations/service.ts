@@ -3,6 +3,7 @@ import { db } from "@/lib/db/client";
 import { conversationMemories, conversations, messages } from "@/db/schema";
 import { NotFoundError, ForbiddenError } from "@/lib/utils/errors";
 import { recordAuditEvent } from "@/lib/audit/log";
+import { getPendingConfirmation } from "./tool-confirmations";
 
 export async function createConversation(userId: string, toolId: string, toolVersionId: string) {
   const [conversation] = await db
@@ -47,7 +48,10 @@ export async function listConversations(
 export async function getConversationWithMessages(conversationId: string, userId: string) {
   const conversation = await getOwnedConversation(conversationId, userId);
   const rows = await db.select().from(messages).where(eq(messages.conversationId, conversationId)).orderBy(messages.createdAt);
-  return { conversation, messages: rows };
+  // §15: lets the UI render the approve/reject card again on page reload, not only while
+  // the original streaming response is still on screen.
+  const pendingToolConfirmation = await getPendingConfirmation(conversationId);
+  return { conversation, messages: rows, pendingToolConfirmation };
 }
 
 export async function renameConversation(conversationId: string, userId: string, title: string) {

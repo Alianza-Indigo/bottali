@@ -11,7 +11,14 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "./auth";
 import { tools, toolVersions } from "./tools";
-import { conversationStatusEnum, memoryModeEnum, messageRoleEnum, messageStatusEnum } from "./enums";
+import { usageReservations } from "./usage";
+import {
+  conversationStatusEnum,
+  memoryModeEnum,
+  messageRoleEnum,
+  messageStatusEnum,
+  toolCallConfirmationStatusEnum,
+} from "./enums";
 
 export const conversations = pgTable(
   "conversations",
@@ -115,5 +122,56 @@ export const conversationMemories = pgTable(
   },
   (table) => [
     index("conversation_memories_user_tool_idx").on(table.userId, table.toolId),
+  ],
+);
+
+/**
+ * §15 human-in-the-loop tools: a model-requested call to a tool with requiresConfirmation
+ * (or explicitly listed in safetyPolicies.confirmationsRequired) pauses the round loop
+ * instead of auto-executing. generationStateSnapshot carries everything the loop needs to
+ * resume exactly where it paused — re-deriving it from persisted conversation messages
+ * would lose the in-flight assistant tool-call/tool-result messages, which are never
+ * persisted to `messages` (only the final visible reply is).
+ */
+export const toolCallConfirmations = pgTable(
+  "tool_call_confirmations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    toolId: uuid("tool_id")
+      .notNull()
+      .references(() => tools.id, { onDelete: "cascade" }),
+    reservationId: uuid("reservation_id")
+      .notNull()
+      .references(() => usageReservations.id, { onDelete: "cascade" }),
+    toolCallId: varchar("tool_call_id", { length: 128 }).notNull(),
+    toolName: varchar("tool_name", { length: 80 }).notNull(),
+    argumentsJson: text("arguments_json").notNull(),
+    status: toolCallConfirmationStatusEnum("status").notNull().default("PENDING"),
+    generationStateSnapshot: jsonb("generation_state_snapshot")
+      .$type<{
+        generationMessages: Array<{ role: string; content: string; toolCalls?: unknown; toolCallId?: string }>;
+        round: number;
+        accumulatedUsage: { inputTokens: number; outputTokens: number };
+        accumulatedLatencyMs: number;
+        userMessageContent: string;
+        /** Tool calls from the same round as the paused one, not yet processed — the paused
+         * call itself is NOT included (it's the top-level toolCallId/toolName/argumentsJson). */
+        remainingCalls: Array<{ id: string; name: string; arguments: string }>;
+      }>()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("tool_call_confirmations_conversation_idx").on(table.conversationId),
+    index("tool_call_confirmations_status_idx").on(table.status),
+    index("tool_call_confirmations_expires_idx").on(table.expiresAt),
   ],
 );

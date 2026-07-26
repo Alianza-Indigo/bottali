@@ -25,6 +25,13 @@ interface MessageRow {
   createdAt: string;
 }
 
+interface PendingToolConfirmation {
+  id: string;
+  toolName: string;
+  argumentsJson: string;
+  expiresAt: string;
+}
+
 export function ChatWindow({
   conversationId,
   tool,
@@ -44,6 +51,8 @@ export function ChatWindow({
   const [error, setError] = useState<string | null>(null);
   const [liveStatus, setLiveStatus] = useState("");
   const [voices, setVoices] = useState<VoiceOption[]>([]);
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingToolConfirmation | null>(null);
+  const [resolvingConfirmation, setResolvingConfirmation] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const listEndRef = useRef<HTMLDivElement>(null);
 
@@ -59,16 +68,22 @@ export function ChatWindow({
   }, [tool.capabilities.voiceOutput]);
 
   const loadMessages = async () => {
-    const res = await apiFetch<{ messages: MessageRow[] }>(`/api/v1/conversations/${conversationId}`);
+    const res = await apiFetch<{ messages: MessageRow[]; pendingToolConfirmation: PendingToolConfirmation | null }>(
+      `/api/v1/conversations/${conversationId}`,
+    );
     setMessages(res.messages);
+    setPendingConfirmation(res.pendingToolConfirmation);
   };
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    apiFetch<{ messages: MessageRow[] }>(`/api/v1/conversations/${conversationId}`)
+    apiFetch<{ messages: MessageRow[]; pendingToolConfirmation: PendingToolConfirmation | null }>(`/api/v1/conversations/${conversationId}`)
       .then((res) => {
-        if (!cancelled) setMessages(res.messages);
+        if (!cancelled) {
+          setMessages(res.messages);
+          setPendingConfirmation(res.pendingToolConfirmation);
+        }
       })
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -111,6 +126,10 @@ export function ChatWindow({
           setLiveStatus("Respuesta bloqueada por políticas de seguridad.");
         } else if (event.type === "error") {
           setError(event.message);
+        } else if (event.type === "confirmation_required") {
+          // The turn paused mid-generation — no assistant message exists yet, so there's
+          // nothing to show in the transcript besides the approve/reject card itself.
+          setLiveStatus("El asistente solicita aprobación para usar una herramienta.");
         } else if (event.type === "done") {
           setLiveStatus(event.finishReason === "cancelled" ? "Generación cancelada." : "Respuesta completa.");
         }
@@ -140,6 +159,17 @@ export function ChatWindow({
   const regenerate = async (assistantMessageId: string) => {
     if (isGenerating) return;
     await runStream(`/api/v1/messages/${assistantMessageId}/regenerate`);
+  };
+
+  const resolveConfirmation = async (decision: "approve" | "reject") => {
+    if (!pendingConfirmation || resolvingConfirmation) return;
+    setResolvingConfirmation(true);
+    setPendingConfirmation(null);
+    try {
+      await runStream(`/api/v1/conversations/${conversationId}/tool-confirmations/${pendingConfirmation.id}/${decision}`);
+    } finally {
+      setResolvingConfirmation(false);
+    }
   };
 
   const cancelGeneration = () => {
@@ -286,6 +316,28 @@ export function ChatWindow({
               </li>
             )}
           </ul>
+        )}
+        {pendingConfirmation && (
+          <Alert tone="warning" className="mt-4">
+            <p className="font-medium">El asistente quiere usar una herramienta</p>
+            <p className="mt-1 text-ink-muted">
+              Herramienta: <span className="font-mono">{pendingConfirmation.toolName}</span>
+            </p>
+            <pre className="mt-1 overflow-x-auto rounded bg-surface-subtle p-2 text-xs text-ink-muted">
+              {pendingConfirmation.argumentsJson}
+            </pre>
+            <p className="mt-1 text-xs text-ink-faint">
+              Puedes seguir escribiendo otros mensajes; esta solicitud vence sola si no respondes.
+            </p>
+            <div className="mt-2 flex gap-2">
+              <Button size="sm" onClick={() => resolveConfirmation("approve")} loading={resolvingConfirmation}>
+                Aprobar
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => resolveConfirmation("reject")} loading={resolvingConfirmation}>
+                Rechazar
+              </Button>
+            </div>
+          </Alert>
         )}
         <div ref={listEndRef} />
       </div>

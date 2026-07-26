@@ -2,7 +2,8 @@ export type ChatStreamEvent =
   | { type: "delta"; text: string }
   | { type: "done"; messageId: string; finishReason: string }
   | { type: "blocked"; reason: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "confirmation_required"; confirmationId: string; toolName: string; arguments: string };
 
 /** Parses the newline-delimited JSON stream produced by the messages/regenerate route
  * handlers, yielding one parsed event per complete line as soon as it arrives. */

@@ -31,6 +31,8 @@ export async function createPublishedTestTool(
     /** Tool names to allow-list in safetyPolicies.allowedInternalTools; also flips
      * capabilities.internalTools on when non-empty. */
     internalTools?: string[];
+    /** Tool names that require human confirmation before auto-executing (§15). */
+    confirmationsRequired?: string[];
   } = {},
 ): Promise<{ toolId: string; versionId: string; slug: string }> {
   await syncProvidersFromEnv(db);
@@ -140,7 +142,7 @@ export async function createPublishedTestTool(
       inputModeration: true,
       outputModeration: true,
       riskSignals: [],
-      confirmationsRequired: [],
+      confirmationsRequired: overrides.confirmationsRequired ?? [],
       allowedInternalTools: overrides.internalTools ?? [],
       prohibitedActions: [],
     },
