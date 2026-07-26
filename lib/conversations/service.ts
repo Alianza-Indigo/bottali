@@ -1,8 +1,9 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { conversationMemories, conversations, messages } from "@/db/schema";
-import { NotFoundError, ForbiddenError } from "@/lib/utils/errors";
+import { NotFoundError, ForbiddenError, AppError } from "@/lib/utils/errors";
 import { recordAuditEvent } from "@/lib/audit/log";
+import { loadVersionConfig } from "@/lib/tools/repository";
 import { getPendingConfirmation } from "./tool-confirmations";
 
 export async function createConversation(userId: string, toolId: string, toolVersionId: string) {
@@ -80,6 +81,32 @@ export async function deleteConversation(conversationId: string, userId: string)
 export async function clearConversationMemory(conversationId: string, userId: string) {
   await getOwnedConversation(conversationId, userId);
   await db.delete(conversationMemories).where(eq(conversationMemories.conversationId, conversationId));
+}
+
+/**
+ * Minimal, real "escalar a humano" (§ capacidad escalation): marks the conversation's
+ * metadata and records an audit event admins can find via the existing audit log
+ * (action "conversation.escalate") — no separate ticketing/inbox subsystem exists yet, so
+ * this deliberately does not invent one.
+ */
+export async function escalateConversation(conversationId: string, userId: string): Promise<void> {
+  const conversation = await getOwnedConversation(conversationId, userId);
+  const config = await loadVersionConfig(conversation.toolVersionId);
+  if (!config.capabilities?.escalation) {
+    throw new AppError("Esta herramienta no tiene habilitado el escalamiento a humano.", "ESCALATION_DISABLED", 409);
+  }
+  if ((conversation.metadata as Record<string, unknown>)?.escalatedAt) return;
+
+  await db
+    .update(conversations)
+    .set({ metadata: { ...(conversation.metadata as Record<string, unknown>), escalatedAt: new Date().toISOString() } })
+    .where(eq(conversations.id, conversationId));
+  await recordAuditEvent({
+    actorId: userId,
+    action: "conversation.escalate",
+    resourceType: "conversation",
+    resourceId: conversationId,
+  });
 }
 
 export async function exportConversation(conversationId: string, userId: string) {

@@ -3,7 +3,10 @@ import { requireCurrentUser } from "@/lib/auth/current-user";
 import { sendMessage } from "@/lib/conversations/pipeline";
 import { parseJsonBody, handleApiError } from "@/lib/validation/http";
 
-const schema = z.object({ content: z.string().min(1).max(8000) });
+const schema = z.object({
+  content: z.string().min(1).max(8000),
+  attachedFileIds: z.array(z.string().uuid()).max(5).optional(),
+});
 
 const encoder = new TextEncoder();
 
@@ -17,15 +20,16 @@ const encoder = new TextEncoder();
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   let user;
   let content: string;
+  let attachedFileIds: string[] | undefined;
   try {
     user = await requireCurrentUser();
     const { id } = await params;
-    ({ content } = await parseJsonBody(request, schema));
+    ({ content, attachedFileIds } = await parseJsonBody(request, schema));
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          for await (const event of sendMessage({ conversationId: id, userId: user!.id, content, signal: request.signal })) {
+          for await (const event of sendMessage({ conversationId: id, userId: user!.id, content, attachedFileIds, signal: request.signal })) {
             controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
           }
         } catch (error) {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { conversations, uploadedFiles } from "@/db/schema";
 import { getStorageAdapter } from "@/lib/storage";
@@ -103,6 +103,26 @@ export async function getFileForDownload(fileId: string, userId: string): Promis
   const buffer = await getStorageAdapter().get(file.blobKey);
   await recordAuditEvent({ actorId: userId, action: "file.download", resourceType: "uploaded_file", resourceId: fileId });
   return { buffer, mimeType: file.mimeType, originalName: file.originalName };
+}
+
+/**
+ * Links previously-uploaded, validated files to a chat message (§17 attachments capability).
+ * Silently drops any id that isn't this user's own validated upload rather than erroring the
+ * whole message — an attachment referencing someone else's file, a still-pending upload, or a
+ * stale id from a slow client should never block sending the message itself.
+ */
+export async function attachFilesToMessage(
+  fileIds: string[],
+  userId: string,
+  conversationId: string,
+  messageId: string,
+): Promise<Array<{ id: string; originalName: string; mimeType: string }>> {
+  if (fileIds.length === 0) return [];
+  const rows = await db.select().from(uploadedFiles).where(inArray(uploadedFiles.id, fileIds));
+  const valid = rows.filter((f) => f.userId === userId && f.status === "VALIDATED" && !f.deletedAt);
+  if (valid.length === 0) return [];
+  await Promise.all(valid.map((f) => db.update(uploadedFiles).set({ messageId, conversationId }).where(eq(uploadedFiles.id, f.id))));
+  return valid.map((f) => ({ id: f.id, originalName: f.originalName, mimeType: f.mimeType }));
 }
 
 export async function deleteUploadedFile(fileId: string, userId: string): Promise<void> {

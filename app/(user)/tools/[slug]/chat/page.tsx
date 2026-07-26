@@ -68,10 +68,14 @@ export default async function ToolChatPage({ params }: { params: Promise<{ slug:
         suggestedQuestions: behavior[0]?.suggestedQuestions ?? [],
         capabilities: {
           files: Boolean(capabilities[0]?.files),
+          images: Boolean(capabilities[0]?.images),
           exportEnabled: Boolean(capabilities[0]?.exportEnabled),
           feedback: Boolean(capabilities[0]?.feedback),
           voiceInput: voiceReady && Boolean(capabilities[0]?.voiceInput),
           voiceOutput: voiceReady && Boolean(capabilities[0]?.voiceOutput),
+          quickReplies: Boolean(capabilities[0]?.quickReplies),
+          menus: Boolean(capabilities[0]?.menus),
+          escalation: Boolean(capabilities[0]?.escalation),
         },
       }}
       initialConversations={existingConversations.map((c) => ({ id: c.id, title: c.title }))}

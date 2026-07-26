@@ -63,17 +63,25 @@ export function CapabilitiesSection({ toolId, versionId, initial }: { toolId: st
     <div className="flex flex-col gap-4">
       {message && <Alert tone={message.tone}>{message.text}</Alert>}
       <div className="grid grid-cols-2 gap-3">
-        {Object.entries(CAPABILITY_LABELS).map(([key, label]) => (
-          <label key={key} className="flex items-center gap-2 text-sm text-ink">
-            <input
-              type="checkbox"
-              checked={form[key] ?? false}
-              onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))}
-              className="h-4 w-4 rounded border-border-strong"
-            />
-            {label}
-          </label>
-        ))}
+        {Object.entries(CAPABILITY_LABELS).map(([key, label]) => {
+          // "Texto" is the base modality of every tool on this platform — there is no
+          // non-text mode to fall back to, so disabling it would break the tool entirely.
+          // Shown as always-on rather than faked as a togglable setting.
+          const alwaysOn = key === "text";
+          return (
+            <label key={key} className="flex items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                checked={alwaysOn ? true : (form[key] ?? false)}
+                disabled={alwaysOn}
+                onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))}
+                className="h-4 w-4 rounded border-border-strong disabled:opacity-60"
+              />
+              {label}
+              {alwaysOn && <span className="text-xs text-ink-faint">(siempre activo)</span>}
+            </label>
+          );
+        })}
       </div>
       <Button onClick={save} loading={saving} className="self-start">
         Guardar capacidades

@@ -23,6 +23,18 @@ interface MessageRow {
   content: string;
   status: string;
   createdAt: string;
+  attachedFileIds?: string[];
+}
+
+interface StagedFile {
+  id: string;
+  name: string;
+  mimeType: string;
+}
+
+interface FileMeta {
+  originalName: string;
+  mimeType: string;
 }
 
 interface PendingToolConfirmation {
@@ -53,8 +65,15 @@ export function ChatWindow({
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingToolConfirmation | null>(null);
   const [resolvingConfirmation, setResolvingConfirmation] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [fileMeta, setFileMeta] = useState<Record<string, FileMeta>>({});
+  const [escalating, setEscalating] = useState(false);
+  const [escalated, setEscalated] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const listEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!tool.capabilities.voiceOutput) return;
@@ -94,6 +113,37 @@ export function ChatWindow({
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages, streamingText]);
+
+  // Lazily fetches display metadata (name, mime type) for attachments referenced by their
+  // file id on any loaded message — messages only carry ids, not names, so a first render
+  // of a conversation with prior attachments needs one small fetch per not-yet-seen id.
+  useEffect(() => {
+    const missing = new Set<string>();
+    for (const message of messages) {
+      for (const id of message.attachedFileIds ?? []) {
+        if (!(id in fileMeta)) missing.add(id);
+      }
+    }
+    if (missing.size === 0) return;
+    let cancelled = false;
+    Promise.all(
+      [...missing].map((id) =>
+        apiFetch<{ file: FileMeta }>(`/api/v1/files/${id}`)
+          .then((res) => [id, res.file] as const)
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      const next: Record<string, FileMeta> = {};
+      for (const entry of results) {
+        if (entry) next[entry[0]] = entry[1];
+      }
+      if (Object.keys(next).length > 0) setFileMeta((prev) => ({ ...prev, ...next }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, fileMeta]);
 
   /** Shared by "send" and "regenerate": both POST to a route that streams NDJSON events. */
   async function runStream(url: string, body?: unknown) {
@@ -148,12 +198,67 @@ export function ChatWindow({
 
   const sendMessage = async (content: string) => {
     if (!content.trim() || isGenerating) return;
+    const attachedFileIds = stagedFiles.map((f) => f.id);
     setMessages((prev) => [
       ...prev,
-      { id: `optimistic-${Date.now()}`, role: "user", content, status: "COMPLETED", createdAt: new Date().toISOString() },
+      {
+        id: `optimistic-${Date.now()}`,
+        role: "user",
+        content,
+        status: "COMPLETED",
+        createdAt: new Date().toISOString(),
+        attachedFileIds,
+      },
     ]);
     setInput("");
-    await runStream(`/api/v1/conversations/${conversationId}/messages`, { content });
+    setStagedFiles([]);
+    await runStream(`/api/v1/conversations/${conversationId}/messages`, {
+      content,
+      ...(attachedFileIds.length > 0 ? { attachedFileIds } : {}),
+    });
+  };
+
+  const uploadFile = async (file: File) => {
+    setUploadError(null);
+    setUploadingFile(true);
+    try {
+      const { fileId } = await apiPost<{ fileId: string }>("/api/v1/files", {
+        toolId: tool.id,
+        conversationId,
+        originalName: file.name,
+        mimeType: file.type || "application/octet-stream",
+        sizeBytes: file.size,
+      });
+      const bytes = await file.arrayBuffer();
+      const res = await fetch(`/api/v1/files/${fileId}/upload-complete`, { method: "POST", body: bytes });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error?.message ?? "No fue posible completar la carga del archivo.");
+      }
+      setStagedFiles((prev) => [...prev, { id: fileId, name: file.name, mimeType: file.type }]);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "No fue posible subir el archivo.");
+    } finally {
+      setUploadingFile(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const removeStagedFile = (id: string) => {
+    setStagedFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const escalate = async () => {
+    if (escalating || escalated) return;
+    setEscalating(true);
+    try {
+      await apiPost(`/api/v1/conversations/${conversationId}/escalate`);
+      setEscalated(true);
+    } catch {
+      setUploadError("No fue posible escalar la conversación. Intenta de nuevo.");
+    } finally {
+      setEscalating(false);
+    }
   };
 
   const regenerate = async (assistantMessageId: string) => {
@@ -227,6 +332,11 @@ export function ChatWindow({
               Exportar
             </Button>
           )}
+          {tool.capabilities.escalation && (
+            <Button size="sm" variant="ghost" loading={escalating} disabled={escalated} onClick={escalate}>
+              {escalated ? "Escalada" : "Escalar a humano"}
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={archive}>
             Archivar
           </Button>
@@ -247,7 +357,7 @@ export function ChatWindow({
         ) : messages.length === 0 ? (
           <div className="flex flex-col gap-3">
             <p className="text-sm text-ink-muted">{tool.welcomeMessage}</p>
-            {tool.suggestedQuestions.length > 0 && (
+            {tool.capabilities.quickReplies && tool.suggestedQuestions.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {tool.suggestedQuestions.map((q) => (
                   <Button key={q} size="sm" variant="secondary" onClick={() => sendMessage(q)}>
@@ -270,6 +380,31 @@ export function ChatWindow({
                 >
                   {message.content || <span className="italic text-ink-faint">(sin contenido)</span>}
                 </div>
+                {tool.capabilities.files && (message.attachedFileIds?.length ?? 0) > 0 && (
+                  <div className="mt-1 flex flex-wrap justify-end gap-2">
+                    {message.attachedFileIds!.map((fileId) => {
+                      const meta = fileMeta[fileId];
+                      const isImage = tool.capabilities.images && meta?.mimeType.startsWith("image/");
+                      return isImage ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          key={fileId}
+                          src={`/api/v1/files/${fileId}/download`}
+                          alt={meta?.originalName ?? "Imagen adjunta"}
+                          className="max-h-40 rounded border border-border"
+                        />
+                      ) : (
+                        <a
+                          key={fileId}
+                          href={`/api/v1/files/${fileId}/download`}
+                          className="rounded border border-border bg-surface-subtle px-2 py-1 text-xs text-ink underline"
+                        >
+                          {meta?.originalName ?? "Archivo adjunto"}
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
                 {message.role === "assistant" && message.status === "COMPLETED" && (
                   <div className="mt-1 flex justify-start gap-3">
                     {tool.capabilities.feedback && (
@@ -352,6 +487,40 @@ export function ChatWindow({
         </Alert>
       )}
 
+      {tool.capabilities.menus && tool.suggestedQuestions.length > 0 && (
+        <div className="flex flex-wrap gap-2 border-t border-border px-4 py-2">
+          {tool.suggestedQuestions.map((q) => (
+            <Button key={q} size="sm" variant="secondary" disabled={isGenerating} onClick={() => sendMessage(q)}>
+              {q}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {uploadError && (
+        <Alert tone="danger" className="mx-4 mb-2">
+          {uploadError}
+        </Alert>
+      )}
+
+      {tool.capabilities.files && stagedFiles.length > 0 && (
+        <div className="flex flex-wrap gap-2 border-t border-border px-4 py-2">
+          {stagedFiles.map((f) => (
+            <span key={f.id} className="flex items-center gap-1 rounded border border-border bg-surface-subtle px-2 py-1 text-xs text-ink">
+              {f.name}
+              <button
+                type="button"
+                aria-label={`Quitar ${f.name}`}
+                onClick={() => removeStagedFile(f.id)}
+                className="text-ink-faint hover:text-danger"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
       <form
         className="flex items-end gap-2 border-t border-border p-3"
         onSubmit={(e) => {
@@ -377,6 +546,34 @@ export function ChatWindow({
           className="flex-1"
           disabled={isGenerating}
         />
+        {tool.capabilities.files && (
+          <>
+            <label htmlFor="chat-file-input" className="sr-only">
+              Adjuntar archivo
+            </label>
+            <input
+              ref={fileInputRef}
+              id="chat-file-input"
+              type="file"
+              accept={tool.capabilities.images ? "image/png,image/jpeg,.pdf,.docx,.txt,.md,.html" : ".pdf,.docx,.txt,.md,.html"}
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadFile(file);
+              }}
+            />
+            <Button
+              type="button"
+              size="md"
+              variant="secondary"
+              loading={uploadingFile}
+              disabled={isGenerating}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              📎
+            </Button>
+          </>
+        )}
         {tool.capabilities.voiceInput && (
           <VoiceRecorderButton
             disabled={isGenerating}

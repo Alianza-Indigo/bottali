@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { conversations, knowledgeBases, messages, providerModels, toolCallConfirmations, tools } from "@/db/schema";
+import { conversations, knowledgeBases, messages, notifications, providerModels, toolCallConfirmations, tools } from "@/db/schema";
 import type { FullVersionConfig } from "@/lib/tools/repository";
 import { canUserAccessTool } from "@/lib/tools/access";
 import { loadVersionConfig } from "@/lib/tools/repository";
@@ -24,6 +24,7 @@ import {
   markConfirmationApproved,
 } from "./tool-confirmations";
 import { retrieveRelevantChunks, buildKnowledgeContextBlock } from "@/lib/knowledge/retrieval";
+import { attachFilesToMessage } from "@/lib/files/service";
 import { recordAuditEvent } from "@/lib/audit/log";
 import { AppError, BudgetExceededError, ForbiddenError, NotFoundError, RateLimitError } from "@/lib/utils/errors";
 
@@ -65,6 +66,9 @@ export interface SendMessageParams {
   userId: string;
   content: string;
   signal: AbortSignal;
+  /** File ids from a prior POST /files upload — gated by capabilities.files on the client;
+   * re-validated server-side against ownership/status regardless (see attachFilesToMessage). */
+  attachedFileIds?: string[];
 }
 
 interface ResolvedContext {
@@ -103,9 +107,15 @@ async function resolveGenerationContext(conversationId: string, userId: string):
 }
 
 function resolveAllowedToolNames(config: ResolvedContext["config"]): string[] {
-  return config.capabilities?.internalTools && config.safetyPolicies
-    ? config.safetyPolicies.allowedInternalTools.filter((name) => name in INTERNAL_TOOLS)
-    : [];
+  if (!config.capabilities?.internalTools || !config.safetyPolicies) return [];
+  return config.safetyPolicies.allowedInternalTools.filter((name) => {
+    if (!(name in INTERNAL_TOOLS)) return false;
+    // documentGeneration is a separate capability toggle layered on top of the general
+    // internalTools/allowedInternalTools gate, same shape as how confirmationsRequired
+    // layers onto individual tool names.
+    if (name === "generate_text_document" && !config.capabilities?.documentGeneration) return false;
+    return true;
+  });
 }
 
 /**
@@ -343,7 +353,7 @@ async function* finalizeGeneration(p: FinalizeParams): AsyncGenerator<StreamEven
   await db.update(conversations).set({ lastMessageAt: new Date(), updatedAt: new Date() }).where(eq(conversations.id, conversation.id));
   await maybeGenerateTitle(conversation.id, userMessageContent);
 
-  if (config.behavior.memoryMode !== "DISABLED") {
+  if (config.capabilities?.memory && config.behavior.memoryMode !== "DISABLED") {
     await recordMemoryTurn({
       userId,
       toolId: tool.id,
@@ -361,6 +371,16 @@ async function* finalizeGeneration(p: FinalizeParams): AsyncGenerator<StreamEven
     correlationId: randomUUID(),
     metadata: { toolId: tool.id, model: model.modelKey, inputTokens: p.usage.inputTokens, outputTokens: p.usage.outputTokens, latencyMs: p.latencyMs },
   });
+
+  if (messageStatus === "COMPLETED" && config.capabilities?.notifications) {
+    await db.insert(notifications).values({
+      userId,
+      kind: "conversation_reply",
+      title: "Nueva respuesta disponible",
+      body: finalContent.slice(0, 200),
+      link: `/tools/${tool.slug}/chat`,
+    });
+  }
 
   if (messageStatus === "BLOCKED") {
     yield { type: "blocked", reason: finalContent };
@@ -421,18 +441,26 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
     throw error;
   }
 
+  // capabilities.history (default true) is the real on/off switch for multi-turn context —
+  // a tool with it off treats every message as a fresh, stateless turn.
   const excluded = new Set(params.excludeMessageIds ?? []);
-  const historyRows = await db
-    .select({ id: messages.id, role: messages.role, content: messages.content })
-    .from(messages)
-    .where(eq(messages.conversationId, conversation.id))
-    .orderBy(desc(messages.createdAt))
-    .limit(HISTORY_MESSAGE_LIMIT + excluded.size);
-  const history = historyRows.filter((m) => !excluded.has(m.id)).slice(0, HISTORY_MESSAGE_LIMIT);
+  let history: Array<{ id: string; role: string; content: string }> = [];
+  if (config.capabilities?.history !== false) {
+    const historyRows = await db
+      .select({ id: messages.id, role: messages.role, content: messages.content })
+      .from(messages)
+      .where(eq(messages.conversationId, conversation.id))
+      .orderBy(desc(messages.createdAt))
+      .limit(HISTORY_MESSAGE_LIMIT + excluded.size);
+    history = historyRows.filter((m) => !excluded.has(m.id)).slice(0, HISTORY_MESSAGE_LIMIT);
+  }
 
-  const memoryItems = config.behavior.memoryMode
-    ? await retrieveMemory({ userId, toolId: tool.id, conversationId: conversation.id, mode: config.behavior.memoryMode })
-    : [];
+  // capabilities.memory is the master switch (mirrors internalTools/allowedInternalTools):
+  // memoryMode configures HOW memory works, capabilities.memory gates WHETHER it runs at all.
+  const memoryItems =
+    config.capabilities?.memory && config.behavior.memoryMode !== "DISABLED"
+      ? await retrieveMemory({ userId, toolId: tool.id, conversationId: conversation.id, mode: config.behavior.memoryMode })
+      : [];
 
   let knowledgeBlock: string | null = null;
   if (config.capabilities?.rag) {
@@ -562,6 +590,10 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
         }
       }
     } else {
+      // capabilities.streaming (default true): off means the client gets the finished
+      // reply as one burst instead of token-by-token. Moderation still windows internally
+      // either way — only whether intermediate windows are forwarded to the client changes.
+      const streamingEnabled = config.capabilities?.streaming !== false;
       for await (const chunk of provider.stream({
         model: model.modelKey,
         messages: generationMessages,
@@ -582,7 +614,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
             blocked = true;
             break;
           }
-          if (result.toForward) yield { type: "delta", text: result.toForward };
+          if (streamingEnabled && result.toForward) yield { type: "delta", text: result.toForward };
         }
         if (chunk.done) {
           finishReason = chunk.finishReason ?? "stop";
@@ -592,8 +624,9 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
       if (!blocked) {
         const result = await checkWindow(true);
         if (result.blocked) blocked = true;
-        else if (result.toForward) yield { type: "delta", text: result.toForward };
+        else if (streamingEnabled && result.toForward) yield { type: "delta", text: result.toForward };
       }
+      if (!blocked && !streamingEnabled && fullText) yield { type: "delta", text: fullText };
     }
   } catch (error) {
     await releaseReservation(reservationId);
@@ -659,6 +692,16 @@ export async function* sendMessage(params: SendMessageParams): AsyncGenerator<St
     .values({ conversationId: params.conversationId, role: "user", content: params.content, status: "COMPLETED" })
     .returning({ id: messages.id });
   if (!userMessage) throw new Error("No fue posible guardar el mensaje del usuario.");
+
+  if (ctx.config.capabilities?.files && params.attachedFileIds?.length) {
+    const attached = await attachFilesToMessage(params.attachedFileIds, params.userId, params.conversationId, userMessage.id);
+    if (attached.length > 0) {
+      await db
+        .update(messages)
+        .set({ attachedFileIds: attached.map((f) => f.id) })
+        .where(eq(messages.id, userMessage.id));
+    }
+  }
 
   yield* generateReply({
     ctx,

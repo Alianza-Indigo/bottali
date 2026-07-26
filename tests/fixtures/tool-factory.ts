@@ -33,6 +33,13 @@ export async function createPublishedTestTool(
     internalTools?: string[];
     /** Tool names that require human confirmation before auto-executing (§15). */
     confirmationsRequired?: string[];
+    history?: boolean;
+    streaming?: boolean;
+    documentGeneration?: boolean;
+    files?: boolean;
+    images?: boolean;
+    escalation?: boolean;
+    notifications?: boolean;
   } = {},
 ): Promise<{ toolId: string; versionId: string; slug: string }> {
   await syncProvidersFromEnv(db);
@@ -103,24 +110,24 @@ export async function createPublishedTestTool(
     versionId,
     {
       text: true,
-      streaming: true,
+      streaming: overrides.streaming ?? true,
       voiceInput: overrides.voice ?? false,
       voiceOutput: overrides.voice ?? false,
-      files: false,
-      images: false,
+      files: overrides.files ?? false,
+      images: overrides.images ?? false,
       forms: false,
       quickReplies: true,
       menus: false,
       memory: overrides.memoryMode ? overrides.memoryMode !== "DISABLED" : false,
-      history: true,
+      history: overrides.history ?? true,
       rag: overrides.rag ?? false,
       exportEnabled: true,
-      documentGeneration: false,
+      documentGeneration: overrides.documentGeneration ?? false,
       internalTools: Boolean(overrides.internalTools?.length),
       externalApis: false,
-      notifications: false,
+      notifications: overrides.notifications ?? false,
       evaluations: false,
-      escalation: false,
+      escalation: overrides.escalation ?? false,
       feedback: true,
       pwa: overrides.pwa ?? false,
       deepLinks: false,
