@@ -2,6 +2,11 @@ import { test, expect } from "@playwright/test";
 import { DEMO_CREDENTIALS, loginAs, readE2eContext } from "./helpers";
 
 test("un usuario puede grabar voz, transcribirla, editarla y escuchar la respuesta", async ({ page }) => {
+  // Real getUserMedia()/MediaRecorder work, unlike the rest of the suite — give it double the
+  // default budget so a busy runner (this is test-order-late, after 18 prior contexts in the
+  // same reused browser process) doesn't false-fail a healthy recording as frozen.
+  test.setTimeout(60_000);
+
   const { toolSlug } = readE2eContext();
 
   await loginAs(page, DEMO_CREDENTIALS.user.email, DEMO_CREDENTIALS.user.password);
@@ -21,7 +26,10 @@ test("un usuario puede grabar voz, transcribirla, editarla y escuchar la respues
   const micButton = page.getByRole("button", { name: "Grabar mensaje de voz" });
   await expect(micButton).toBeVisible();
   await micButton.click();
-  await expect(page.getByRole("button", { name: "Detener grabación de voz" })).toBeVisible();
+  // getUserMedia() is a real async browser call; under CI load a cold start can take longer
+  // than Playwright's 5s default, so this needs the same generous timeout as the other
+  // async-API assertions below rather than the implicit default.
+  await expect(page.getByRole("button", { name: "Detener grabación de voz" })).toBeVisible({ timeout: 10_000 });
 
   // Give the fake media stream a moment to actually accumulate audio frames before stopping.
   await page.waitForTimeout(500);
