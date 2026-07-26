@@ -22,6 +22,14 @@ env:
   ENABLE_VOICE: "true"
   STT_PROVIDER: fake
   TTS_PROVIDER: fake
+  # boolFromString in lib/env.ts defaults an UNSET var to false, not to .env.example's
+  # documented defaults — this bit CI directly: files.test.ts failed against a real
+  # Postgres service because ENABLE_FILES was never set here (masked locally by
+  # .env.local already carrying it). Every ENABLE_* flag the test suites depend on must be
+  # spelled out explicitly.
+  ENABLE_FILES: "true"
+  ENABLE_PWA: "true"
+  ENABLE_ANALYTICS: "true"
 
 jobs:
   lint-typecheck:
