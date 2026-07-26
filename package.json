@@ -22,6 +22,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:studio": "drizzle-kit studio",
+    "admin:promote": "tsx scripts/promote-admin.ts",
     "env:check": "tsx scripts/verify-env.ts",
     "pwa:icons": "tsx scripts/generate-pwa-assets.ts",
     "test:providers": "tsx scripts/test-providers.ts"
