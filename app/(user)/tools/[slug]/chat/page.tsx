@@ -76,6 +76,7 @@ export default async function ToolChatPage({ params }: { params: Promise<{ slug:
           quickReplies: Boolean(capabilities[0]?.quickReplies),
           menus: Boolean(capabilities[0]?.menus),
           escalation: Boolean(capabilities[0]?.escalation),
+          deepLinks: Boolean(capabilities[0]?.deepLinks),
         },
       }}
       initialConversations={existingConversations.map((c) => ({ id: c.id, title: c.title }))}

@@ -157,6 +157,7 @@ describe("tools engine lifecycle (real Postgres, fake LLM provider)", () => {
         feedback: true,
         pwa: false,
         deepLinks: false,
+        externalApiEndpoints: [],
       },
       actorId,
     );

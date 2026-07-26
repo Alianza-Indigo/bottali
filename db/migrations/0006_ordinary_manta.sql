@@ -1,0 +1,1 @@
+ALTER TABLE "tool_capabilities" ADD COLUMN "external_api_endpoints" jsonb DEFAULT '[]'::jsonb NOT NULL;

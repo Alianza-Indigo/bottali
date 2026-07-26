@@ -40,6 +40,11 @@ export async function createPublishedTestTool(
     images?: boolean;
     escalation?: boolean;
     notifications?: boolean;
+    forms?: boolean;
+    deepLinks?: boolean;
+    evaluations?: boolean;
+    externalApis?: boolean;
+    externalApiEndpoints?: Array<{ name: string; url: string; method: "GET" | "POST"; description?: string }>;
   } = {},
 ): Promise<{ toolId: string; versionId: string; slug: string }> {
   await syncProvidersFromEnv(db);
@@ -115,7 +120,7 @@ export async function createPublishedTestTool(
       voiceOutput: overrides.voice ?? false,
       files: overrides.files ?? false,
       images: overrides.images ?? false,
-      forms: false,
+      forms: overrides.forms ?? false,
       quickReplies: true,
       menus: false,
       memory: overrides.memoryMode ? overrides.memoryMode !== "DISABLED" : false,
@@ -124,13 +129,14 @@ export async function createPublishedTestTool(
       exportEnabled: true,
       documentGeneration: overrides.documentGeneration ?? false,
       internalTools: Boolean(overrides.internalTools?.length),
-      externalApis: false,
+      externalApis: overrides.externalApis ?? false,
       notifications: overrides.notifications ?? false,
-      evaluations: false,
+      evaluations: overrides.evaluations ?? false,
       escalation: overrides.escalation ?? false,
       feedback: true,
       pwa: overrides.pwa ?? false,
-      deepLinks: false,
+      deepLinks: overrides.deepLinks ?? false,
+      externalApiEndpoints: overrides.externalApiEndpoints ?? [],
     },
     actorId,
   );

@@ -12,6 +12,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const user = await requireCurrentUser();
     const { confirmationId } = await params;
 
+    // Optional body: only present when approving a collect_form_input confirmation (§
+    // capacidad forms) — the normal approve/reject flow sends no body at all, so this must
+    // tolerate an empty request rather than requiring valid JSON.
+    let formAnswers: Record<string, string> | undefined;
+    const rawBody = await request.text();
+    if (rawBody) {
+      try {
+        const parsed = JSON.parse(rawBody);
+        if (parsed && typeof parsed === "object" && parsed.formAnswers && typeof parsed.formAnswers === "object") {
+          formAnswers = parsed.formAnswers;
+        }
+      } catch {
+        // Malformed body — proceed as if none was sent.
+      }
+    }
+
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
@@ -19,6 +35,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             confirmationId,
             userId: user.id,
             decision: "approve",
+            formAnswers,
             signal: request.signal,
           })) {
             controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));

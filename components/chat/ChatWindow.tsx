@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { Card } from "@/components/ui/Card";
 import { Alert } from "@/components/ui/Alert";
+import { Label } from "@/components/ui/Label";
+import { Input } from "@/components/ui/Input";
 import { VoiceRecorderButton } from "./VoiceRecorderButton";
 import { VoicePlaybackButton } from "./VoicePlaybackButton";
 import type { ToolChatInfo } from "./ChatPageClient";
@@ -71,6 +73,8 @@ export function ChatWindow({
   const [fileMeta, setFileMeta] = useState<Record<string, FileMeta>>({});
   const [escalating, setEscalating] = useState(false);
   const [escalated, setEscalated] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [formValues, setFormValues] = useState<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
   const listEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -113,6 +117,10 @@ export function ChatWindow({
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages, streamingText]);
+
+  useEffect(() => {
+    setFormValues({});
+  }, [pendingConfirmation?.id]);
 
   // Lazily fetches display metadata (name, mime type) for attachments referenced by their
   // file id on any loaded message — messages only carry ids, not names, so a first render
@@ -261,17 +269,27 @@ export function ChatWindow({
     }
   };
 
+  const copyShareLink = async () => {
+    const url = `${window.location.origin}${window.location.pathname}?conversation=${conversationId}`;
+    await navigator.clipboard.writeText(url);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
+
   const regenerate = async (assistantMessageId: string) => {
     if (isGenerating) return;
     await runStream(`/api/v1/messages/${assistantMessageId}/regenerate`);
   };
 
-  const resolveConfirmation = async (decision: "approve" | "reject") => {
+  const resolveConfirmation = async (decision: "approve" | "reject", formAnswers?: Record<string, string>) => {
     if (!pendingConfirmation || resolvingConfirmation) return;
     setResolvingConfirmation(true);
     setPendingConfirmation(null);
     try {
-      await runStream(`/api/v1/conversations/${conversationId}/tool-confirmations/${pendingConfirmation.id}/${decision}`);
+      await runStream(
+        `/api/v1/conversations/${conversationId}/tool-confirmations/${pendingConfirmation.id}/${decision}`,
+        formAnswers ? { formAnswers } : undefined,
+      );
     } finally {
       setResolvingConfirmation(false);
     }
@@ -335,6 +353,11 @@ export function ChatWindow({
           {tool.capabilities.escalation && (
             <Button size="sm" variant="ghost" loading={escalating} disabled={escalated} onClick={escalate}>
               {escalated ? "Escalada" : "Escalar a humano"}
+            </Button>
+          )}
+          {tool.capabilities.deepLinks && (
+            <Button size="sm" variant="ghost" onClick={copyShareLink}>
+              {linkCopied ? "¡Copiado!" : "Compartir"}
             </Button>
           )}
           <Button size="sm" variant="ghost" onClick={archive}>
@@ -452,27 +475,74 @@ export function ChatWindow({
             )}
           </ul>
         )}
-        {pendingConfirmation && (
-          <Alert tone="warning" className="mt-4" data-testid="tool-confirmation-card">
-            <p className="font-medium">El asistente quiere usar una herramienta</p>
-            <p className="mt-1 text-ink-muted">
-              Herramienta: <span className="font-mono">{pendingConfirmation.toolName}</span>
-            </p>
-            <pre className="mt-1 overflow-x-auto rounded bg-surface-subtle p-2 text-xs text-ink-muted">
-              {pendingConfirmation.argumentsJson}
-            </pre>
-            <p className="mt-1 text-xs text-ink-faint">
-              Puedes seguir escribiendo otros mensajes; esta solicitud vence sola si no respondes.
-            </p>
-            <div className="mt-2 flex gap-2">
-              <Button size="sm" onClick={() => resolveConfirmation("approve")} loading={resolvingConfirmation}>
-                Aprobar
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => resolveConfirmation("reject")} loading={resolvingConfirmation}>
-                Rechazar
-              </Button>
-            </div>
-          </Alert>
+        {pendingConfirmation && pendingConfirmation.toolName === "collect_form_input" ? (
+          (() => {
+            let form: { fields: Array<{ name: string; label: string; type?: string }>; prompt?: string } | null = null;
+            try {
+              form = JSON.parse(pendingConfirmation.argumentsJson);
+            } catch {
+              form = null;
+            }
+            return (
+              <Alert tone="info" className="mt-4" data-testid="tool-confirmation-card">
+                <p className="font-medium">{form?.prompt || "El asistente necesita algunos datos"}</p>
+                {form?.fields ? (
+                  <form
+                    className="mt-2 flex flex-col gap-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      resolveConfirmation("approve", formValues);
+                    }}
+                  >
+                    {form.fields.map((field) => (
+                      <div key={field.name}>
+                        <Label htmlFor={`form-field-${field.name}`}>{field.label}</Label>
+                        <Input
+                          id={`form-field-${field.name}`}
+                          type={field.type === "number" ? "number" : field.type === "email" ? "email" : "text"}
+                          value={formValues[field.name] ?? ""}
+                          onChange={(e) => setFormValues((prev) => ({ ...prev, [field.name]: e.target.value }))}
+                        />
+                      </div>
+                    ))}
+                    <div className="mt-1 flex gap-2">
+                      <Button type="submit" size="sm" loading={resolvingConfirmation}>
+                        Enviar
+                      </Button>
+                      <Button type="button" size="sm" variant="secondary" onClick={() => resolveConfirmation("reject")} loading={resolvingConfirmation}>
+                        Cancelar
+                      </Button>
+                    </div>
+                  </form>
+                ) : (
+                  <p className="mt-1 text-xs text-danger">No fue posible mostrar este formulario.</p>
+                )}
+              </Alert>
+            );
+          })()
+        ) : (
+          pendingConfirmation && (
+            <Alert tone="warning" className="mt-4" data-testid="tool-confirmation-card">
+              <p className="font-medium">El asistente quiere usar una herramienta</p>
+              <p className="mt-1 text-ink-muted">
+                Herramienta: <span className="font-mono">{pendingConfirmation.toolName}</span>
+              </p>
+              <pre className="mt-1 overflow-x-auto rounded bg-surface-subtle p-2 text-xs text-ink-muted">
+                {pendingConfirmation.argumentsJson}
+              </pre>
+              <p className="mt-1 text-xs text-ink-faint">
+                Puedes seguir escribiendo otros mensajes; esta solicitud vence sola si no respondes.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" onClick={() => resolveConfirmation("approve")} loading={resolvingConfirmation}>
+                  Aprobar
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => resolveConfirmation("reject")} loading={resolvingConfirmation}>
+                  Rechazar
+                </Button>
+              </div>
+            </Alert>
+          )
         )}
         <div ref={listEndRef} />
       </div>

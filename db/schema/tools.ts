@@ -181,6 +181,13 @@ export const toolCapabilities = pgTable("tool_capabilities", {
   feedback: boolean("feedback").notNull().default(true),
   pwa: boolean("pwa").notNull().default(true),
   deepLinks: boolean("deep_links").notNull().default(false),
+  // externalApis (§ capacidad): admin-named, admin-URL'd endpoints only — the model can only
+  // invoke by `name`, never supply its own URL, which is what keeps this from being an SSRF
+  // vector. See lib/ai/tools/external.ts for the runtime allow-list + fetch guards.
+  externalApiEndpoints: jsonb("external_api_endpoints")
+    .$type<Array<{ name: string; url: string; method: "GET" | "POST"; description?: string }>>()
+    .notNull()
+    .default([]),
 });
 
 export const toolAccessRules = pgTable("tool_access_rules", {

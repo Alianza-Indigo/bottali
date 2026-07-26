@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiPost } from "@/lib/api/client";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -23,6 +24,7 @@ export interface ToolChatInfo {
     quickReplies: boolean;
     menus: boolean;
     escalation: boolean;
+    deepLinks: boolean;
   };
 }
 
@@ -38,9 +40,25 @@ export function ChatPageClient({
   tool: ToolChatInfo;
   initialConversations: ConversationSummary[];
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [conversationList, setConversationList] = useState(initialConversations);
-  const [selectedId, setSelectedId] = useState<string | null>(initialConversations[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    (tool.capabilities.deepLinks && searchParams.get("conversation")) || initialConversations[0]?.id || null,
+  );
   const [creating, setCreating] = useState(false);
+
+  // Deep links (§ capacidad deepLinks): keep the URL in sync with the selected conversation
+  // so it can be copied/shared and reopened directly to the same conversation later.
+  useEffect(() => {
+    if (!tool.capabilities.deepLinks) return;
+    const current = searchParams.get("conversation");
+    if (current === selectedId) return;
+    const query = selectedId ? `?conversation=${selectedId}` : "";
+    router.replace(`${pathname}${query}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, tool.capabilities.deepLinks]);
 
   const createConversation = async () => {
     setCreating(true);

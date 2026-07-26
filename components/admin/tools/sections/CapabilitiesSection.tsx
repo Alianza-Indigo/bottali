@@ -4,9 +4,18 @@ import { useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
+import { Label } from "@/components/ui/Label";
+import { Input } from "@/components/ui/Input";
 import type { FullVersionConfig } from "@/lib/tools/repository";
 
 type Capabilities = NonNullable<FullVersionConfig["capabilities"]>;
+
+interface EndpointRow {
+  name: string;
+  url: string;
+  method: "GET" | "POST";
+  description: string;
+}
 
 const CAPABILITY_LABELS: Record<string, string> = {
   text: "Texto",
@@ -40,6 +49,12 @@ export function CapabilitiesSection({ toolId, versionId, initial }: { toolId: st
       ? Object.fromEntries(Object.keys(CAPABILITY_LABELS).map((key) => [key, Boolean((initial as Record<string, unknown>)[key])]))
       : defaults,
   );
+  // Tracked separately from `form` (booleans only) — this must always be re-sent on every
+  // save (see below), or an unrelated checkbox toggle would silently wipe out previously
+  // configured endpoints: updateCapabilities() is a full column overwrite, not a merge.
+  const [endpoints, setEndpoints] = useState<EndpointRow[]>(
+    (initial?.externalApiEndpoints ?? []).map((e) => ({ ...e, description: e.description ?? "" })),
+  );
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
 
@@ -49,7 +64,14 @@ export function CapabilitiesSection({ toolId, versionId, initial }: { toolId: st
     try {
       await apiFetch(`/api/v1/admin/tools/${toolId}/versions/${versionId}`, {
         method: "PATCH",
-        body: JSON.stringify({ capabilities: form }),
+        body: JSON.stringify({
+          capabilities: {
+            ...form,
+            externalApiEndpoints: endpoints
+              .filter((e) => e.name && e.url)
+              .map((e) => ({ ...e, description: e.description || undefined })),
+          },
+        }),
       });
       setMessage({ tone: "success", text: "Capacidades guardadas." });
     } catch (error) {
@@ -57,6 +79,10 @@ export function CapabilitiesSection({ toolId, versionId, initial }: { toolId: st
     } finally {
       setSaving(false);
     }
+  };
+
+  const updateEndpoint = (index: number, patch: Partial<EndpointRow>) => {
+    setEndpoints((prev) => prev.map((e, i) => (i === index ? { ...e, ...patch } : e)));
   };
 
   return (
@@ -83,6 +109,77 @@ export function CapabilitiesSection({ toolId, versionId, initial }: { toolId: st
           );
         })}
       </div>
+
+      {form.externalApis && (
+        <div className="flex flex-col gap-3 rounded border border-border p-3">
+          <p className="text-sm font-medium text-ink">APIs externas permitidas</p>
+          <p className="text-xs text-ink-faint">
+            El modelo solo puede invocar por nombre — nunca puede elegir ni cambiar la URL de destino.
+          </p>
+          {endpoints.map((endpoint, index) => (
+            <div key={index} className="grid grid-cols-2 gap-2 rounded bg-surface-subtle p-2">
+              <div>
+                <Label htmlFor={`endpoint-name-${index}`}>Nombre</Label>
+                <Input
+                  id={`endpoint-name-${index}`}
+                  value={endpoint.name}
+                  onChange={(e) => updateEndpoint(index, { name: e.target.value })}
+                  placeholder="crear_ticket"
+                />
+              </div>
+              <div>
+                <Label htmlFor={`endpoint-method-${index}`}>Método</Label>
+                <select
+                  id={`endpoint-method-${index}`}
+                  value={endpoint.method}
+                  onChange={(e) => updateEndpoint(index, { method: e.target.value as "GET" | "POST" })}
+                  className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink"
+                >
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                </select>
+              </div>
+              <div className="col-span-2">
+                <Label htmlFor={`endpoint-url-${index}`}>URL (HTTPS)</Label>
+                <Input
+                  id={`endpoint-url-${index}`}
+                  value={endpoint.url}
+                  onChange={(e) => updateEndpoint(index, { url: e.target.value })}
+                  placeholder="https://api.ejemplo.org/tickets"
+                />
+              </div>
+              <div className="col-span-2">
+                <Label htmlFor={`endpoint-desc-${index}`}>Descripción (para el modelo)</Label>
+                <Input
+                  id={`endpoint-desc-${index}`}
+                  value={endpoint.description}
+                  onChange={(e) => updateEndpoint(index, { description: e.target.value })}
+                  placeholder="Crea un ticket de soporte."
+                />
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="col-span-2 justify-self-start"
+                onClick={() => setEndpoints((prev) => prev.filter((_, i) => i !== index))}
+              >
+                Quitar
+              </Button>
+            </div>
+          ))}
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="self-start"
+            onClick={() => setEndpoints((prev) => [...prev, { name: "", url: "", method: "GET", description: "" }])}
+          >
+            Agregar endpoint
+          </Button>
+        </div>
+      )}
+
       <Button onClick={save} loading={saving} className="self-start">
         Guardar capacidades
       </Button>

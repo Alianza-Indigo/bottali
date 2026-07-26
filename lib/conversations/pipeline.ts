@@ -10,6 +10,7 @@ import { estimateCostCents } from "@/lib/ai/usage/cost";
 import type { GenerationMessage, GenerationResult, GenerationUsage, LLMProvider, ToolCall, ToolSpec } from "@/lib/ai/types";
 import { INTERNAL_TOOLS, getInternalTool, listToolSpecsForLLM } from "@/lib/ai/tools/registry";
 import { executeInternalTool } from "@/lib/ai/tools/execute";
+import { buildExternalApiToolSpecs, executeExternalApiCall, isExternalApiToolName, type ExternalApiEndpoint } from "@/lib/ai/tools/external";
 import { reconcileUsage, releaseReservation, reserveUsage } from "./limits";
 import { recordMemoryTurn, retrieveMemory } from "./memory";
 import { maybeGenerateTitle } from "./service";
@@ -110,12 +111,18 @@ function resolveAllowedToolNames(config: ResolvedContext["config"]): string[] {
   if (!config.capabilities?.internalTools || !config.safetyPolicies) return [];
   return config.safetyPolicies.allowedInternalTools.filter((name) => {
     if (!(name in INTERNAL_TOOLS)) return false;
-    // documentGeneration is a separate capability toggle layered on top of the general
+    // documentGeneration/forms are separate capability toggles layered on top of the general
     // internalTools/allowedInternalTools gate, same shape as how confirmationsRequired
     // layers onto individual tool names.
     if (name === "generate_text_document" && !config.capabilities?.documentGeneration) return false;
+    if (name === "collect_form_input" && !config.capabilities?.forms) return false;
     return true;
   });
+}
+
+function resolveExternalApiEndpoints(config: ResolvedContext["config"]): ExternalApiEndpoint[] {
+  if (!config.capabilities?.externalApis) return [];
+  return config.capabilities.externalApiEndpoints ?? [];
 }
 
 /**
@@ -129,17 +136,23 @@ async function executeToolCallForPipeline(
   call: { name: string; arguments: string },
   context: { userId: string; conversationId: string; toolId: string },
   allowedToolNames: string[],
+  externalApiEndpoints: ExternalApiEndpoint[],
 ): Promise<string> {
-  const definition = getInternalTool(call.name);
-  if (!definition) {
-    return JSON.stringify({ error: `Herramienta interna desconocida: ${call.name}` });
-  }
-
   let parsedInput: unknown;
   try {
     parsedInput = JSON.parse(call.arguments);
   } catch {
     return JSON.stringify({ error: "Los argumentos enviados para la herramienta no son JSON válido." });
+  }
+
+  if (isExternalApiToolName(call.name)) {
+    const result = await executeExternalApiCall(call.name, parsedInput, externalApiEndpoints);
+    return JSON.stringify(result);
+  }
+
+  const definition = getInternalTool(call.name);
+  if (!definition) {
+    return JSON.stringify({ error: `Herramienta interna desconocida: ${call.name}` });
   }
 
   try {
@@ -151,6 +164,7 @@ async function executeToolCallForPipeline(
 }
 
 function toolNeedsConfirmation(toolName: string, confirmationsRequired: string[]): boolean {
+  if (isExternalApiToolName(toolName)) return true;
   const definition = getInternalTool(toolName);
   return Boolean(definition?.requiresConfirmation) || confirmationsRequired.includes(toolName);
 }
@@ -190,6 +204,7 @@ interface ToolRoundLoopParams {
   signal: AbortSignal;
   context: { userId: string; conversationId: string; toolId: string };
   allowedToolNames: string[];
+  externalApiEndpoints: ExternalApiEndpoint[];
   confirmationsRequired: string[];
   toolSpecs: ToolSpec[];
   generationMessages: GenerationMessage[];
@@ -262,7 +277,7 @@ async function runToolRoundLoop(p: ToolRoundLoopParams): Promise<ToolRoundLoopOu
           remainingCalls: toolCallsToProcess.slice(i + 1),
         };
       }
-      const toolResultContent = await executeToolCallForPipeline(call, p.context, p.allowedToolNames);
+      const toolResultContent = await executeToolCallForPipeline(call, p.context, p.allowedToolNames, p.externalApiEndpoints);
       generationMessages = [...generationMessages, { role: "tool", content: wrapToolResultForModel(toolResultContent), toolCallId: call.id }];
     }
 
@@ -486,7 +501,12 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
   // in depth — an admin must both enable tool use AND explicitly name which tools this
   // assistant may call, matching how `confirmationsRequired` layers onto individual tools).
   const allowedToolNames = resolveAllowedToolNames(config);
-  const toolSpecs = allowedToolNames.length > 0 ? listToolSpecsForLLM(allowedToolNames) : undefined;
+  const externalApiEndpoints = resolveExternalApiEndpoints(config);
+  const combinedToolSpecs = [
+    ...(allowedToolNames.length > 0 ? listToolSpecsForLLM(allowedToolNames) : []),
+    ...buildExternalApiToolSpecs(externalApiEndpoints),
+  ];
+  const toolSpecs = combinedToolSpecs.length > 0 ? combinedToolSpecs : undefined;
   const confirmationsRequired = config.safetyPolicies?.confirmationsRequired ?? [];
 
   const provider = getLLMProvider();
@@ -541,6 +561,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
         signal,
         context: { userId, conversationId: conversation.id, toolId: tool.id },
         allowedToolNames,
+        externalApiEndpoints,
         confirmationsRequired,
         toolSpecs,
         generationMessages,
@@ -756,6 +777,10 @@ export interface ResolveToolConfirmationParams {
   userId: string;
   decision: "approve" | "reject";
   signal: AbortSignal;
+  /** Only meaningful when the paused tool is collect_form_input (§ capacidad forms) and
+   * decision is "approve": the user's submitted field values become the tool's result
+   * directly — there is nothing else to "execute", the form answers ARE the output. */
+  formAnswers?: Record<string, string>;
 }
 
 /**
@@ -795,13 +820,22 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
   const call: ToolCall = { id: confirmation.toolCallId, name: confirmation.toolName, arguments: confirmation.argumentsJson };
 
   const allowedToolNames = resolveAllowedToolNames(config);
+  const externalApiEndpoints = resolveExternalApiEndpoints(config);
   const confirmationsRequired = config.safetyPolicies?.confirmationsRequired ?? [];
-  const toolSpecs = allowedToolNames.length > 0 ? listToolSpecsForLLM(allowedToolNames) : [];
+  const toolSpecs = [
+    ...(allowedToolNames.length > 0 ? listToolSpecsForLLM(allowedToolNames) : []),
+    ...buildExternalApiToolSpecs(externalApiEndpoints),
+  ];
 
-  const toolResultContent =
-    params.decision === "approve"
-      ? await executeToolCallForPipeline(call, context, allowedToolNames)
-      : JSON.stringify({ error: "El usuario rechazó la ejecución de esta herramienta." });
+  let toolResultContent: string;
+  if (params.decision !== "approve") {
+    toolResultContent = JSON.stringify({ error: "El usuario rechazó la ejecución de esta herramienta." });
+  } else if (confirmation.toolName === "collect_form_input") {
+    // The form's answers ARE the result — there is no separate execution step to run.
+    toolResultContent = JSON.stringify({ success: true, output: { answers: params.formAnswers ?? {} } });
+  } else {
+    toolResultContent = await executeToolCallForPipeline(call, context, allowedToolNames, externalApiEndpoints);
+  }
 
   // confirmation.generationStateSnapshot is the in-memory row from the claim above — reading
   // it here is unaffected by the DB writes just below, which target the same row but don't
@@ -836,6 +870,7 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
       signal: params.signal,
       context,
       allowedToolNames,
+      externalApiEndpoints,
       confirmationsRequired,
       toolSpecs,
       generationMessages,

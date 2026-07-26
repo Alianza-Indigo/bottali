@@ -6,8 +6,9 @@ import { notifications, tools, uploadedFiles, users } from "@/db/schema";
 import { hashPassword } from "@/lib/auth/password";
 import { activateToolForUser } from "@/lib/tools/access";
 import { createConversation, escalateConversation, getConversationWithMessages } from "@/lib/conversations/service";
-import { sendMessage } from "@/lib/conversations/pipeline";
+import { sendMessage, resumeAfterToolConfirmation } from "@/lib/conversations/pipeline";
 import { initiateUpload, completeUpload } from "@/lib/files/service";
+import { createSuite } from "@/lib/evaluations/service";
 import type { StreamEvent } from "@/lib/conversations/pipeline";
 import { AppError } from "@/lib/utils/errors";
 import { createPublishedTestTool } from "../fixtures/tool-factory";
@@ -190,6 +191,107 @@ describe("tool capabilities actually gate real behavior", () => {
     expect((escalated.metadata as Record<string, unknown>).escalatedAt).toBeTruthy();
 
     await expect(escalateConversation(disabledConvo.id, actorId)).rejects.toThrow(AppError);
+
+    await db.delete(tools).where(eq(tools.id, enabledToolId));
+    await db.delete(tools).where(eq(tools.id, disabledToolId));
+  });
+
+  it("capabilities.forms pauses for collect_form_input and the submitted answers become the tool result", async () => {
+    const { toolId } = await createPublishedTestTool(actorId, { internalTools: ["collect_form_input"], forms: true });
+    await activateToolForUser(toolId, actorId);
+    const tool = (await db.select().from(tools).where(eq(tools.id, toolId)))[0]!;
+    const conversation = await createConversation(actorId, toolId, tool.publishedVersionId!);
+
+    const events = await collect(
+      sendMessage({
+        conversationId: conversation.id,
+        userId: actorId,
+        content: 'HERRAMIENTA:collect_form_input {"fields":[{"name":"email","label":"Correo"}]}',
+        signal: new AbortController().signal,
+      }),
+    );
+    const paused = events.find((e) => e.type === "confirmation_required");
+    expect(paused).toBeTruthy();
+    if (paused?.type !== "confirmation_required") throw new Error("expected pause");
+    expect(paused.toolName).toBe("collect_form_input");
+
+    const resumeEvents = await collect(
+      resumeAfterToolConfirmation({
+        confirmationId: paused.confirmationId,
+        userId: actorId,
+        decision: "approve",
+        formAnswers: { email: "persona@example.org" },
+        signal: new AbortController().signal,
+      }),
+    );
+    expect(resumeEvents.some((e) => e.type === "error")).toBe(false);
+    const { messages: msgs } = await getConversationWithMessages(conversation.id, actorId);
+    const assistantMessage = msgs.find((m) => m.role === "assistant")!;
+    expect(assistantMessage.content).toContain("persona@example.org");
+
+    await db.delete(tools).where(eq(tools.id, toolId));
+  });
+
+  it("capabilities.externalApis calls only the admin-configured named endpoint, never a model-supplied URL", async () => {
+    const { toolId } = await createPublishedTestTool(actorId, {
+      externalApis: true,
+      externalApiEndpoints: [{ name: "get_status", url: "https://example.org/status", method: "GET", description: "Consulta el estado." }],
+    });
+    await activateToolForUser(toolId, actorId);
+    const tool = (await db.select().from(tools).where(eq(tools.id, toolId)))[0]!;
+    const conversation = await createConversation(actorId, toolId, tool.publishedVersionId!);
+
+    const originalFetch = globalThis.fetch;
+    let calledUrl: string | undefined;
+    globalThis.fetch = (async (url: string | URL) => {
+      calledUrl = url.toString();
+      return new Response(JSON.stringify({ status: "ok" }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+
+    try {
+      const events = await collect(
+        sendMessage({
+          conversationId: conversation.id,
+          userId: actorId,
+          content: "HERRAMIENTA:external_api__get_status {}",
+          signal: new AbortController().signal,
+        }),
+      );
+      const paused = events.find((e) => e.type === "confirmation_required");
+      expect(paused).toBeTruthy();
+      if (paused?.type !== "confirmation_required") throw new Error("expected pause");
+      expect(paused.toolName).toBe("external_api__get_status");
+
+      await collect(
+        resumeAfterToolConfirmation({
+          confirmationId: paused.confirmationId,
+          userId: actorId,
+          decision: "approve",
+          signal: new AbortController().signal,
+        }),
+      );
+      expect(calledUrl).toBe("https://example.org/status");
+
+      const { messages: msgs } = await getConversationWithMessages(conversation.id, actorId);
+      const assistantMessage = msgs.find((m) => m.role === "assistant")!;
+      expect(assistantMessage.content).toContain('"status":"ok"');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    await db.delete(tools).where(eq(tools.id, toolId));
+  });
+
+  it("capabilities.evaluations gates creating an evaluation suite for a tool", async () => {
+    const { toolId: enabledToolId } = await createPublishedTestTool(actorId, { evaluations: true });
+    const { toolId: disabledToolId } = await createPublishedTestTool(actorId, { evaluations: false });
+
+    const suite = await createSuite({ toolId: enabledToolId, name: "Suite", criteria: [], isMandatoryForPublish: false, actorId });
+    expect(suite.toolId).toBe(enabledToolId);
+
+    await expect(
+      createSuite({ toolId: disabledToolId, name: "Suite", criteria: [], isMandatoryForPublish: false, actorId }),
+    ).rejects.toThrow(AppError);
 
     await db.delete(tools).where(eq(tools.id, enabledToolId));
     await db.delete(tools).where(eq(tools.id, disabledToolId));

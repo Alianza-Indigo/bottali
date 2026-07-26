@@ -1,9 +1,10 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { evaluationCases, evaluationResults, evaluationRuns, evaluationSuites } from "@/db/schema";
+import { evaluationCases, evaluationResults, evaluationRuns, evaluationSuites, tools } from "@/db/schema";
 import { runToolTest } from "@/lib/tools/test-run";
+import { loadVersionConfig } from "@/lib/tools/repository";
 import { recordAuditEvent } from "@/lib/audit/log";
-import { NotFoundError } from "@/lib/utils/errors";
+import { AppError, NotFoundError } from "@/lib/utils/errors";
 
 export interface CreateSuiteInput {
   toolId: string;
@@ -14,7 +15,24 @@ export interface CreateSuiteInput {
   actorId: string;
 }
 
+/**
+ * capabilities.evaluations is versioned, but suites are tool-level — gate against the tool's
+ * current working version (draft if it has one, otherwise published), the closest real proxy
+ * for "is this tool's evaluation capability on right now."
+ */
+async function assertToolAllowsEvaluations(toolId: string): Promise<void> {
+  const [tool] = await db.select().from(tools).where(eq(tools.id, toolId)).limit(1);
+  if (!tool) throw new NotFoundError("Herramienta no encontrada.");
+  const versionId = tool.draftVersionId ?? tool.publishedVersionId;
+  if (!versionId) return;
+  const config = await loadVersionConfig(versionId);
+  if (config.capabilities && !config.capabilities.evaluations) {
+    throw new AppError("Esta herramienta no tiene habilitada la capacidad de evaluaciones.", "EVALUATIONS_DISABLED", 409);
+  }
+}
+
 export async function createSuite(input: CreateSuiteInput) {
+  await assertToolAllowsEvaluations(input.toolId);
   const [suite] = await db
     .insert(evaluationSuites)
     .values({

@@ -25,6 +25,12 @@ const calculatorSchema = z.object({ expression: z.string().min(1).max(200) });
 const dateTimeSchema = z.object({ timezone: z.string().max(64).optional() });
 const documentSchema = z.object({ title: z.string().min(1).max(200), content: z.string().min(1).max(20000) });
 const knowledgeQuerySchema = z.object({ query: z.string().min(1).max(500) });
+const formFieldSchema = z.object({
+  name: z.string().min(1).max(60),
+  label: z.string().min(1).max(200),
+  type: z.enum(["text", "number", "email"]).default("text"),
+});
+const collectFormInputSchema = z.object({ fields: z.array(formFieldSchema).min(1).max(10), prompt: z.string().max(300).optional() });
 
 // The registry map necessarily erases each tool's concrete input type (they differ per
 // tool) — this single narrow cast is the one place that happens. Every call site still
@@ -91,6 +97,40 @@ export const INTERNAL_TOOLS: Record<string, ToolDefinition<unknown>> = {
     async execute(input: z.infer<typeof documentSchema>): Promise<ToolExecutionResult> {
       const text = `${input.title}\n${"=".repeat(input.title.length)}\n\n${input.content}`;
       return { success: true, output: { text, mimeType: "text/plain" } };
+    },
+  }),
+  collect_form_input: eraseInputType({
+    name: "collect_form_input",
+    description: "Muestra un formulario simple al usuario para recolectar los campos indicados y espera su respuesta.",
+    inputSchema: collectFormInputSchema,
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Mensaje breve que explica qué se está pidiendo." },
+        fields: {
+          type: "array",
+          description: "Campos a solicitar.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              label: { type: "string" },
+              type: { type: "string", enum: ["text", "number", "email"] },
+            },
+            required: ["name", "label"],
+          },
+        },
+      },
+      required: ["fields"],
+    },
+    requiresConfirmation: true,
+    riskLevel: "LOW",
+    async execute(): Promise<ToolExecutionResult> {
+      // Never actually reached in normal operation: resumeAfterToolConfirmation special-cases
+      // this tool name and returns the user's submitted form answers directly as the result
+      // instead of calling execute() — the "form" IS the human input, not a computation this
+      // function could perform on its own.
+      return { success: false, error: "Este formulario debe completarse desde la interfaz del chat." };
     },
   }),
   knowledge_base_query: eraseInputType({

@@ -73,6 +73,24 @@ export const modelsSchema = z.object({
 });
 export type ModelsInput = z.infer<typeof modelsSchema>;
 
+// Only an admin (tools.update) can ever set this URL — the model/user only ever supplies a
+// request body, never the destination — so this isn't closing an SSRF hole so much as adding
+// defense-in-depth against a misconfigured or compromised admin session targeting internal
+// infrastructure.
+const PRIVATE_HOSTNAME_PATTERN =
+  /^(localhost|127\.|0\.0\.0\.0|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|\[::1\])/i;
+
+const externalApiEndpointSchema = z.object({
+  name: z.string().regex(/^[a-zA-Z0-9_]{1,40}$/, "Solo letras, números y guion bajo, máx 40 caracteres."),
+  url: z
+    .string()
+    .url()
+    .refine((u) => u.startsWith("https://"), "La URL debe usar HTTPS.")
+    .refine((u) => !PRIVATE_HOSTNAME_PATTERN.test(new URL(u).hostname), "No se permiten direcciones privadas/internas."),
+  method: z.enum(["GET", "POST"]),
+  description: z.string().max(200).optional(),
+});
+
 export const capabilitiesSchema = z.object({
   text: z.boolean(),
   streaming: z.boolean(),
@@ -96,6 +114,7 @@ export const capabilitiesSchema = z.object({
   feedback: z.boolean(),
   pwa: z.boolean(),
   deepLinks: z.boolean(),
+  externalApiEndpoints: z.array(externalApiEndpointSchema).max(10).default([]),
 });
 export type CapabilitiesInput = z.infer<typeof capabilitiesSchema>;
 
