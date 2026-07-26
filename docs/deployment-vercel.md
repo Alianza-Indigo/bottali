@@ -88,34 +88,37 @@ producción; ajustar según necesidad de negocio.
    resultantes a las variables de entorno del proyecto.
 3. **Configurar el resto de variables** de la sección 2 en
    Project Settings → Environment Variables.
-4. **Ejecutar las migraciones** contra la base de datos de producción antes
-   del primer despliegue (o como paso de build):
-   ```bash
-   DATABASE_URL=... npm run db:migrate
-   ```
-5. **Sembrar el catálogo de roles/permisos y proveedores** (idempotente,
-   seguro de repetir):
-   ```bash
-   DATABASE_URL=... npm run db:seed
-   ```
-   En `APP_ENV=production` este script omite automáticamente los datos de
-   demostración (usuarios/herramientas de ejemplo) y solo siembra RBAC,
-   catálogo de proveedores y el aviso de privacidad por defecto.
-6. **Verificar las variables de entorno** antes de desplegar:
+4. **Desplegar** (`vercel --prod` o vía integración Git). El script
+   `vercel-build` de `package.json` (`npm run db:migrate && npm run db:seed &&
+   npm run build`) corre automáticamente en cada build de Vercel — no hace
+   falta ejecutar migraciones ni el seed a mano. Ambos pasos son idempotentes,
+   así que repetirlos en cada deploy es seguro. En `APP_ENV=production` el
+   seed omite automáticamente los datos de demostración (usuarios/herramientas
+   de ejemplo) y solo siembra RBAC, catálogo de proveedores, el aviso de
+   privacidad por defecto y la cuenta inicial `SUPER_ADMIN`
+   (`db/seed/bootstrap-admin.ts`).
+   `vercel.json` declara un único cron consolidado (`/api/v1/cron/daily`, una
+   vez al día) que ejecuta en secuencia el procesamiento de trabajos en cola,
+   las publicaciones programadas, la limpieza de archivos/confirmaciones
+   expiradas, la retención y el chequeo de salud de proveedores — el plan
+   Hobby de Vercel limita los crons a frecuencia diaria; con un plan de pago
+   puede volver a dividirse en crons más frecuentes si la carga lo justifica.
+5. **Verificar las variables de entorno** antes de desplegar por primera vez:
    ```bash
    npm run env:check
    ```
    Falla con una lista explícita de lo que falta si `APP_ENV=production` y
    algo obligatorio no está configurado.
-7. **Desplegar** (`vercel --prod` o vía integración Git). `vercel.json`
-   declara un único cron consolidado (`/api/v1/cron/daily`, una vez al día)
-   que ejecuta en secuencia el procesamiento de trabajos en cola, las
-   publicaciones programadas, la limpieza de archivos/confirmaciones
-   expiradas, la retención y el chequeo de salud de proveedores — el plan
-   Hobby de Vercel limita los crons a frecuencia diaria; con un plan de pago
-   puede volver a dividirse en crons más frecuentes si la carga lo justifica.
-8. **Generar los íconos de PWA** si no están versionados o si cambia la
+6. **Generar los íconos de PWA** si no están versionados o si cambia la
    marca (`npm run pwa:icons`); son estáticos y se sirven desde `public/`.
+
+Si prefieres correr migraciones/seed manualmente contra la base de datos
+(por ejemplo antes del primer despliegue, o para depurar), sigue siendo
+posible:
+```bash
+DATABASE_URL=... npm run db:migrate
+DATABASE_URL=... npm run db:seed
+```
 
 ## 4. Verificación post-despliegue
 
