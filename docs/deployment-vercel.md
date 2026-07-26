@@ -58,9 +58,12 @@ Copia `.env.example` como referencia. Las variables marcadas como
 - `LLM_PROVIDER=openai-compatible` + `LLM_API_KEY` + `LLM_API_BASE_URL` +
   `LLM_DEFAULT_MODEL`. Lo mismo aplica a `EMBEDDING_PROVIDER`,
   `MODERATION_PROVIDER`, `STT_PROVIDER`, `TTS_PROVIDER` si se habilitan voz.
-- Dejar cualquiera en su valor `fake`/`disabled` es válido para un entorno de
-  demostración, pero `scripts/verify-env.ts` lo señala como advertencia en
-  producción.
+- Dejar cualquiera en su valor `fake` es válido para un entorno de
+  demostración, pero `scripts/verify-env.ts` **falla el chequeo** (exit code 1,
+  bloqueante) si `APP_ENV=production` y cualquiera de `LLM_PROVIDER`,
+  `EMBEDDING_PROVIDER`, `MODERATION_PROVIDER`, `STT_PROVIDER` o
+  `TTS_PROVIDER` sigue en `fake`. `STT_PROVIDER`/`TTS_PROVIDER` sí aceptan
+  `disabled` en producción si la herramienta no usa voz.
 
 ### Email
 

@@ -1,5 +1,6 @@
 import "./scripts/load-env";
 import { defineConfig, devices } from "@playwright/test";
+import { resolvePlaywrightExecutablePath } from "./scripts/playwright-browser-path";
 
 const PORT = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : 3100;
 const BASE_URL = `http://localhost:${PORT}`;
@@ -18,7 +19,7 @@ export default defineConfig({
     trace: "retain-on-failure",
     permissions: ["microphone"],
     launchOptions: {
-      executablePath: "/opt/pw-browsers/chromium",
+      executablePath: resolvePlaywrightExecutablePath(),
       // Feeds a synthetic audio stream to getUserMedia and auto-grants the permission prompt,
       // so the real MediaRecorder-based voice input flow can be exercised headlessly without
       // OS-level audio hardware.

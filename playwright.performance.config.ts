@@ -1,5 +1,6 @@
 import "./scripts/load-env";
 import { defineConfig, devices } from "@playwright/test";
+import { resolvePlaywrightExecutablePath } from "./scripts/playwright-browser-path";
 
 // Separate from playwright.config.ts deliberately: performance thresholds are inherently
 // looser/more environment-sensitive than functional assertions, and a slow perf run
@@ -17,7 +18,7 @@ export default defineConfig({
   globalSetup: "./tests/e2e/global-setup.ts",
   use: {
     baseURL: BASE_URL,
-    launchOptions: { executablePath: "/opt/pw-browsers/chromium" },
+    launchOptions: { executablePath: resolvePlaywrightExecutablePath() },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {

@@ -70,6 +70,15 @@ interface GenerateReplyParams {
   userMessageId: string;
   userMessageContent: string;
   signal: AbortSignal;
+  /**
+   * Identifies this specific generation attempt for `reserveUsage`'s dedup check. Must be
+   * stable across retries of the SAME attempt (so a duplicate call never double-reserves
+   * budget) but distinct across attempts that should each be billed separately — e.g. two
+   * different regenerate clicks. Callers derive it from a row id that's unique per attempt
+   * (the fresh user message for `sendMessage`, the specific message being regenerated for
+   * `regenerateResponse`), never from randomness.
+   */
+  idempotencyKey: string;
   /** Excluded from the history sent to the model — used by regenerate to drop the old reply. */
   excludeMessageIds?: string[];
 }
@@ -81,7 +90,7 @@ interface GenerateReplyParams {
  * `regenerateResponse` (same user turn, fresh reply) so the two never drift apart.
  */
 async function* generateReply(params: GenerateReplyParams): AsyncGenerator<StreamEvent> {
-  const { ctx, userId, userMessageId, userMessageContent, signal } = params;
+  const { ctx, userId, userMessageId, userMessageContent, signal, idempotencyKey } = params;
   const { conversation, tool, config, model } = ctx;
 
   const estimatedCostCents = estimateCostCents(
@@ -96,7 +105,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
       toolId: tool.id,
       toolVersionId: conversation.toolVersionId,
       conversationId: conversation.id,
-      idempotencyKey: `msg:${userMessageId}:${randomUUID()}`,
+      idempotencyKey,
       estimatedCostCents,
     });
     reservationId = reservation.reservationId;
@@ -338,6 +347,9 @@ export async function* sendMessage(params: SendMessageParams): AsyncGenerator<St
     userMessageId: userMessage.id,
     userMessageContent: params.content,
     signal: params.signal,
+    // userMessage.id is freshly inserted above, unique to this call — stable across a retry
+    // of this exact attempt, distinct from every other message.
+    idempotencyKey: `message-generation:${userMessage.id}`,
   });
 }
 
@@ -370,6 +382,11 @@ export async function* regenerateResponse(params: RegenerateParams): AsyncGenera
     userMessageId: anchor.id,
     userMessageContent: anchor.content,
     signal: params.signal,
+    // target.id identifies which specific assistant message the regenerate click targeted.
+    // Two regenerate clicks always target different existing rows (the original, then
+    // whichever reply that produced), so this stays distinct per attempt — while a duplicate
+    // call for the SAME click (e.g. an accidental double-submit) collapses onto one reservation.
+    idempotencyKey: `message-generation:${target.id}`,
     excludeMessageIds: [target.id],
   });
 }

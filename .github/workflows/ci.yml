@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Fixed, non-secret values shared by every job so lib/env.ts's schema validates the same
+  # way everywhere. Real Postgres is only actually reachable in jobs that declare the
+  # `postgres` service below (integration/e2e/performance) — lint/typecheck/unit never open
+  # a connection (the `postgres` package connects lazily, and those suites touch no DB).
+  APP_SECRET_KEY: ci-placeholder-secret-do-not-use-outside-ci-0000000000
+  NEXT_PUBLIC_APP_URL: http://localhost:3000
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/crisis_platform
+  DATABASE_POOL_URL: postgres://postgres:postgres@localhost:5432/crisis_platform
+  APP_ENV: development
+  ENABLE_VOICE: "true"
+  STT_PROVIDER: fake
+  TTS_PROVIDER: fake
+
+jobs:
+  lint-typecheck:
+    name: Lint & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run test
+
+  integration:
+    name: Integration tests (real Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crisis_platform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm run test:integration
+
+  e2e:
+    name: E2E, security & accessibility (Playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crisis_platform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      # This runner has no pre-installed browser (unlike the project's dev sandbox), so
+      # actually download one here. playwright.config.ts's executablePath resolver falls
+      # back to Playwright's own default resolution when the sandbox path is absent.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run db:migrate
+      - run: npm run test:e2e
+
+  performance:
+    name: Performance suite (non-blocking)
+    runs-on: ubuntu-latest
+    # Load/latency thresholds are inherently noisy on shared, unpredictable CI runners —
+    # this job still runs on every push so regressions are visible, but a bad run here
+    # must not block merges the way a real functional/security failure does.
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crisis_platform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run db:migrate
+      - run: npm run test:performance

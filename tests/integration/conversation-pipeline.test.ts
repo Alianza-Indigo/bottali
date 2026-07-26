@@ -8,6 +8,7 @@ import { activateToolForUser } from "@/lib/tools/access";
 import { createConversation, getConversationWithMessages, archiveConversation, restoreConversation, deleteConversation } from "@/lib/conversations/service";
 import { regenerateResponse, sendMessage } from "@/lib/conversations/pipeline";
 import type { StreamEvent } from "@/lib/conversations/pipeline";
+import { reserveUsage } from "@/lib/conversations/limits";
 import { createPublishedTestTool } from "../fixtures/tool-factory";
 
 async function collect(gen: AsyncGenerator<StreamEvent>): Promise<StreamEvent[]> {
@@ -58,6 +59,43 @@ describe("conversation pipeline (real Postgres, fake LLM + moderation provider)"
     expect(msgs[1]!.role).toBe("assistant");
     expect(msgs[1]!.status).toBe("COMPLETED");
     expect(msgs[1]!.inputTokens).toBeGreaterThan(0);
+  });
+
+  it("reserveUsage is idempotent: the same key returns the same reservation instead of double-booking", async () => {
+    const tool = await db.select().from(tools).where(eq(tools.id, toolId)).limit(1);
+    const conversation = await createConversation(actorId, toolId, tool[0]!.publishedVersionId!);
+    const idempotencyKey = `message-generation:${randomUUID()}`;
+
+    const first = await reserveUsage({
+      userId: actorId,
+      toolId,
+      toolVersionId: conversation.toolVersionId,
+      conversationId: conversation.id,
+      idempotencyKey,
+      estimatedCostCents: 10,
+    });
+    const second = await reserveUsage({
+      userId: actorId,
+      toolId,
+      toolVersionId: conversation.toolVersionId,
+      conversationId: conversation.id,
+      idempotencyKey,
+      estimatedCostCents: 10,
+    });
+
+    // A retry with the SAME key must reuse the original reservation rather than booking twice —
+    // this is exactly the property a random idempotencyKey (msg:id:randomUUID()) used to break.
+    expect(second.reservationId).toBe(first.reservationId);
+
+    const third = await reserveUsage({
+      userId: actorId,
+      toolId,
+      toolVersionId: conversation.toolVersionId,
+      conversationId: conversation.id,
+      idempotencyKey: `message-generation:${randomUUID()}`,
+      estimatedCostCents: 10,
+    });
+    expect(third.reservationId).not.toBe(first.reservationId);
   });
 
   it("blocks a message flagged by input moderation without calling the model", async () => {
