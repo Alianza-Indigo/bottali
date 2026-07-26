@@ -60,6 +60,7 @@ const envSchema = z.object({
 
   MAX_UPLOAD_BYTES: numberFromString(26214400),
   SIGNED_URL_TTL_SECONDS: numberFromString(900),
+  GENERATED_FILE_TTL_SECONDS: numberFromString(2592000),
   DEFAULT_DAILY_MESSAGE_LIMIT: numberFromString(200),
   DEFAULT_MONTHLY_TOKEN_LIMIT: numberFromString(2000000),
   DEFAULT_MONTHLY_COST_LIMIT_CENTS: numberFromString(5000),

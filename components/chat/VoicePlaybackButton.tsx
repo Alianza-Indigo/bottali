@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, csrfHeaders } from "@/lib/api/client";
 
 interface VoiceOption {
   id: string;
@@ -47,7 +47,7 @@ export function VoicePlaybackButton({ text, voices }: { text: string; voices: Vo
     try {
       const res = await fetch("/api/v1/speech/synthesize", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ text, voiceId, speed }),
       });
       if (!res.ok) {

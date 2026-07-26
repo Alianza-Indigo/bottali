@@ -5,7 +5,7 @@ import { userProfiles, users } from "@/db/schema";
 import { loginSchema } from "@/lib/validation/auth";
 import { parseJsonBody, handleApiError } from "@/lib/validation/http";
 import { verifyPassword } from "@/lib/auth/password";
-import { createSession, getRequestMetadata } from "@/lib/auth/session";
+import { createSession, getRequestMetadata, isMfaEnabled } from "@/lib/auth/session";
 import { getRateLimiter } from "@/lib/security/rate-limit";
 import { recordAuditEvent, recordSecurityEvent } from "@/lib/audit/log";
 import { AppError, RateLimitError } from "@/lib/utils/errors";
@@ -84,7 +84,18 @@ export async function POST(request: Request) {
       .set({ failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() })
       .where(eq(users.id, user.id));
 
-    await createSession(user.id);
+    // §28 MFA: password is correct, but a user with MFA enabled doesn't get a usable
+    // session until they also pass POST /api/v1/auth/mfa/login-verify — the session row
+    // exists (so that endpoint can find it via the cookie) but getCurrentSession() won't
+    // honor it until then.
+    const mfaEnabled = await isMfaEnabled(user.id);
+    await createSession(user.id, { requireMfaVerification: mfaEnabled });
+
+    if (mfaEnabled) {
+      await recordAuditEvent({ actorId: user.id, action: "auth.login.mfa_pending", resourceType: "user", resourceId: user.id });
+      return NextResponse.json({ mfaRequired: true });
+    }
+
     await recordAuditEvent({ actorId: user.id, action: "auth.login", resourceType: "user", resourceId: user.id });
 
     return NextResponse.json({

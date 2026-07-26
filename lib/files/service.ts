@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { conversations, uploadedFiles } from "@/db/schema";
+import { conversations, generatedFiles, uploadedFiles } from "@/db/schema";
 import { getStorageAdapter } from "@/lib/storage";
 import { getEnv } from "@/lib/env";
 import { ALLOWED_UPLOAD_MIME_TYPES, sniffMimeType } from "./validate";
@@ -123,6 +123,66 @@ export async function attachFilesToMessage(
   if (valid.length === 0) return [];
   await Promise.all(valid.map((f) => db.update(uploadedFiles).set({ messageId, conversationId }).where(eq(uploadedFiles.id, f.id))));
   return valid.map((f) => ({ id: f.id, originalName: f.originalName, mimeType: f.mimeType }));
+}
+
+export interface GeneratedDocumentInput {
+  userId: string;
+  toolId: string;
+  conversationId: string;
+  messageId: string;
+  kind: string;
+  title: string;
+  text: string;
+  mimeType: string;
+}
+
+/**
+ * §17/§36 "generación de documentos": persists a document produced by the
+ * generate_text_document internal tool as a real stored file (rather than a value that only
+ * ever lived in the model's tool-result JSON), so the user gets a downloadable artifact and
+ * the cleanup cron (cleanup_expired_files) has a real row + blob to reclaim.
+ */
+export async function persistGeneratedDocument(input: GeneratedDocumentInput): Promise<{ id: string }> {
+  const env = getEnv();
+  const bytes = Buffer.from(input.text, "utf-8");
+  const fileId = randomUUID();
+  const blobKey = `generated/${input.userId}/${fileId}.txt`;
+
+  await getStorageAdapter().put(blobKey, bytes, input.mimeType);
+
+  const [file] = await db
+    .insert(generatedFiles)
+    .values({
+      id: fileId,
+      userId: input.userId,
+      toolId: input.toolId,
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      kind: input.kind,
+      title: input.title.slice(0, 255),
+      blobKey,
+      mimeType: input.mimeType,
+      sizeBytes: bytes.length,
+      expiresAt: new Date(Date.now() + env.GENERATED_FILE_TTL_SECONDS * 1000),
+    })
+    .returning({ id: generatedFiles.id });
+  if (!file) throw new Error("No fue posible guardar el documento generado.");
+
+  return { id: file.id };
+}
+
+export async function getGeneratedFileForDownload(
+  fileId: string,
+  userId: string,
+): Promise<{ buffer: Buffer; mimeType: string; title: string }> {
+  const rows = await db.select().from(generatedFiles).where(eq(generatedFiles.id, fileId)).limit(1);
+  const file = rows[0];
+  if (!file || file.deletedAt) throw new NotFoundError("Documento no encontrado.");
+  if (file.userId !== userId) throw new ForbiddenError("No puedes descargar este documento.");
+
+  const buffer = await getStorageAdapter().get(file.blobKey);
+  await recordAuditEvent({ actorId: userId, action: "generated_file.download", resourceType: "generated_file", resourceId: fileId });
+  return { buffer, mimeType: file.mimeType, title: file.title };
 }
 
 export async function deleteUploadedFile(fileId: string, userId: string): Promise<void> {

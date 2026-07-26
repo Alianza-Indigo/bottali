@@ -71,6 +71,11 @@ export const sessions = pgTable(
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    // Null while a login is pending TOTP entry (only set at creation time when the user has
+    // MFA enabled) — getCurrentSession() treats a null value here as "not logged in yet" for
+    // any user whose MFA is enabled, so the session cookie alone can never grant access
+    // without also passing the second factor.
+    mfaVerifiedAt: timestamp("mfa_verified_at", { withTimezone: true }),
   },
   (table) => [
     index("sessions_user_id_idx").on(table.userId),

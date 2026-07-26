@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db/client";
-import { notifications, tools, uploadedFiles, users } from "@/db/schema";
+import { generatedFiles, notifications, tools, uploadedFiles, users } from "@/db/schema";
+import { getStorageAdapter } from "@/lib/storage";
 import { hashPassword } from "@/lib/auth/password";
 import { activateToolForUser } from "@/lib/tools/access";
 import { createConversation, escalateConversation, getConversationWithMessages } from "@/lib/conversations/service";
@@ -86,6 +87,41 @@ describe("tool capabilities actually gate real behavior", () => {
     // documentGeneration is off, so the tool spec was never offered to the model — the fake
     // provider's trigger can't match a tool that wasn't in the request's `tools` array.
     expect(assistantMessage.content).not.toContain("Resultado de la herramienta");
+
+    await db.delete(tools).where(eq(tools.id, toolId));
+  });
+
+  it("generate_text_document persists a real generated_files row and a downloadable blob, linked to the assistant message", async () => {
+    const { toolId } = await createPublishedTestTool(actorId, {
+      internalTools: ["generate_text_document"],
+      documentGeneration: true,
+    });
+    await activateToolForUser(toolId, actorId);
+    const tool = (await db.select().from(tools).where(eq(tools.id, toolId)))[0]!;
+    const conversation = await createConversation(actorId, toolId, tool.publishedVersionId!);
+
+    await collect(
+      sendMessage({
+        conversationId: conversation.id,
+        userId: actorId,
+        content: 'HERRAMIENTA:generate_text_document {"title":"Resumen","content":"Contenido de prueba"}',
+        signal: new AbortController().signal,
+      }),
+    );
+
+    const { messages: msgs } = await getConversationWithMessages(conversation.id, actorId);
+    const assistantMessage = msgs.find((m) => m.role === "assistant")!;
+    expect(assistantMessage.generatedFileIds.length).toBe(1);
+
+    const [fileRow] = await db.select().from(generatedFiles).where(eq(generatedFiles.id, assistantMessage.generatedFileIds[0]!));
+    expect(fileRow).toBeDefined();
+    expect(fileRow!.userId).toBe(actorId);
+    expect(fileRow!.conversationId).toBe(conversation.id);
+    expect(fileRow!.messageId).toBe(assistantMessage.id);
+    expect(fileRow!.title).toBe("Resumen");
+
+    const storedBytes = await getStorageAdapter().get(fileRow!.blobKey);
+    expect(storedBytes.toString("utf-8")).toContain("Contenido de prueba");
 
     await db.delete(tools).where(eq(tools.id, toolId));
   });

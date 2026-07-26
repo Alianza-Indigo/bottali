@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { apiDelete, apiFetch, apiPost } from "@/lib/api/client";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiDelete, apiFetch, apiPost, csrfHeaders } from "@/lib/api/client";
 import { readNdjsonStream } from "@/lib/chat/stream-reader";
+import { clearDraft, loadDraft, saveDraft } from "@/lib/chat/drafts";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { Card } from "@/components/ui/Card";
@@ -26,6 +28,7 @@ interface MessageRow {
   status: string;
   createdAt: string;
   attachedFileIds?: string[];
+  generatedFileIds?: string[];
 }
 
 interface StagedFile {
@@ -39,11 +42,21 @@ interface FileMeta {
   mimeType: string;
 }
 
+interface GeneratedFileMeta {
+  title: string;
+  mimeType: string;
+}
+
 interface PendingToolConfirmation {
   id: string;
   toolName: string;
   argumentsJson: string;
   expiresAt: string;
+}
+
+interface ConversationQueryData {
+  messages: MessageRow[];
+  pendingToolConfirmation: PendingToolConfirmation | null;
 }
 
 export function ChatWindow({
@@ -57,20 +70,19 @@ export function ChatWindow({
   onRenamed: (title: string) => void;
   onArchivedOrDeleted: () => void;
 }) {
-  const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const conversationQueryKey = ["conversation", conversationId] as const;
   const [input, setInput] = useState("");
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [liveStatus, setLiveStatus] = useState("");
-  const [voices, setVoices] = useState<VoiceOption[]>([]);
-  const [pendingConfirmation, setPendingConfirmation] = useState<PendingToolConfirmation | null>(null);
   const [resolvingConfirmation, setResolvingConfirmation] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [fileMeta, setFileMeta] = useState<Record<string, FileMeta>>({});
+  const [generatedFileMeta, setGeneratedFileMeta] = useState<Record<string, GeneratedFileMeta>>({});
   const [escalating, setEscalating] = useState(false);
   const [escalated, setEscalated] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -79,44 +91,54 @@ export function ChatWindow({
   const listEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (!tool.capabilities.voiceOutput) return;
-    let cancelled = false;
-    apiFetch<{ voices: VoiceOption[] }>("/api/v1/voices").then((res) => {
-      if (!cancelled) setVoices(res.voices);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [tool.capabilities.voiceOutput]);
+  // TanStack Query (QueryProvider, app/layout.tsx) rather than a bare useEffect+fetch: this
+  // conversation's messages+pending-confirmation are a real cacheable server resource,
+  // invalidated (not manually re-fetched-and-set) whenever a turn finishes streaming.
+  const conversationQuery = useQuery({
+    queryKey: conversationQueryKey,
+    queryFn: () => apiFetch<ConversationQueryData>(`/api/v1/conversations/${conversationId}`),
+  });
+  const messages = useMemo(() => conversationQuery.data?.messages ?? [], [conversationQuery.data]);
+  const pendingConfirmation = conversationQuery.data?.pendingToolConfirmation ?? null;
+  const loading = conversationQuery.isLoading;
 
+  const voicesQuery = useQuery({
+    queryKey: ["voices"],
+    queryFn: () => apiFetch<{ voices: VoiceOption[] }>("/api/v1/voices").then((res) => res.voices),
+    enabled: tool.capabilities.voiceOutput,
+  });
+  const voices = voicesQuery.data ?? [];
+
+  /** Re-fetches (rather than trusting the streamed events alone) so the persisted, final
+   * shape of the turn — real message ids, generatedFileIds, moderation outcome — replaces
+   * the optimistic/streaming view exactly once the server has actually written it. */
   const loadMessages = async () => {
-    const res = await apiFetch<{ messages: MessageRow[]; pendingToolConfirmation: PendingToolConfirmation | null }>(
-      `/api/v1/conversations/${conversationId}`,
-    );
-    setMessages(res.messages);
-    setPendingConfirmation(res.pendingToolConfirmation);
+    await queryClient.invalidateQueries({ queryKey: conversationQueryKey, exact: true });
   };
 
   useEffect(() => {
+    listEndRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, streamingText]);
+
+  // §22/§36 local drafts: restores whatever was left in the composer for this conversation
+  // (IndexedDB, lib/chat/drafts) — e.g. after a reload or a crashed tab — separately from the
+  // conversation's actual messages, which come from the query above.
+  useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    apiFetch<{ messages: MessageRow[]; pendingToolConfirmation: PendingToolConfirmation | null }>(`/api/v1/conversations/${conversationId}`)
-      .then((res) => {
-        if (!cancelled) {
-          setMessages(res.messages);
-          setPendingConfirmation(res.pendingToolConfirmation);
-        }
-      })
-      .finally(() => !cancelled && setLoading(false));
+    loadDraft(conversationId).then((draft) => {
+      if (!cancelled && draft) setInput(draft);
+    });
     return () => {
       cancelled = true;
     };
   }, [conversationId]);
 
   useEffect(() => {
-    listEndRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, streamingText]);
+    const timeout = setTimeout(() => {
+      saveDraft(conversationId, input);
+    }, 400);
+    return () => clearTimeout(timeout);
+  }, [conversationId, input]);
 
   useEffect(() => {
     setFormValues({});
@@ -153,6 +175,36 @@ export function ChatWindow({
     };
   }, [messages, fileMeta]);
 
+  // Same lazy-fetch pattern as attachedFileIds, for documents the assistant generated
+  // (§17/§36 generate_text_document) — messages only carry ids, not titles.
+  useEffect(() => {
+    const missing = new Set<string>();
+    for (const message of messages) {
+      for (const id of message.generatedFileIds ?? []) {
+        if (!(id in generatedFileMeta)) missing.add(id);
+      }
+    }
+    if (missing.size === 0) return;
+    let cancelled = false;
+    Promise.all(
+      [...missing].map((id) =>
+        apiFetch<{ file: GeneratedFileMeta }>(`/api/v1/generated-files/${id}`)
+          .then((res) => [id, res.file] as const)
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      const next: Record<string, GeneratedFileMeta> = {};
+      for (const entry of results) {
+        if (entry) next[entry[0]] = entry[1];
+      }
+      if (Object.keys(next).length > 0) setGeneratedFileMeta((prev) => ({ ...prev, ...next }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, generatedFileMeta]);
+
   /** Shared by "send" and "regenerate": both POST to a route that streams NDJSON events. */
   async function runStream(url: string, body?: unknown) {
     setError(null);
@@ -165,7 +217,7 @@ export function ChatWindow({
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: body ? { "Content-Type": "application/json" } : undefined,
+        headers: body ? { "Content-Type": "application/json", ...csrfHeaders() } : csrfHeaders(),
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
@@ -207,19 +259,27 @@ export function ChatWindow({
   const sendMessage = async (content: string) => {
     if (!content.trim() || isGenerating) return;
     const attachedFileIds = stagedFiles.map((f) => f.id);
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `optimistic-${Date.now()}`,
-        role: "user",
-        content,
-        status: "COMPLETED",
-        createdAt: new Date().toISOString(),
-        attachedFileIds,
-      },
-    ]);
+    queryClient.setQueryData<ConversationQueryData>(conversationQueryKey, (old) =>
+      old
+        ? {
+            ...old,
+            messages: [
+              ...old.messages,
+              {
+                id: `optimistic-${Date.now()}`,
+                role: "user",
+                content,
+                status: "COMPLETED",
+                createdAt: new Date().toISOString(),
+                attachedFileIds,
+              },
+            ],
+          }
+        : old,
+    );
     setInput("");
     setStagedFiles([]);
+    await clearDraft(conversationId);
     await runStream(`/api/v1/conversations/${conversationId}/messages`, {
       content,
       ...(attachedFileIds.length > 0 ? { attachedFileIds } : {}),
@@ -238,7 +298,7 @@ export function ChatWindow({
         sizeBytes: file.size,
       });
       const bytes = await file.arrayBuffer();
-      const res = await fetch(`/api/v1/files/${fileId}/upload-complete`, { method: "POST", body: bytes });
+      const res = await fetch(`/api/v1/files/${fileId}/upload-complete`, { method: "POST", headers: csrfHeaders(), body: bytes });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error?.message ?? "No fue posible completar la carga del archivo.");
@@ -284,7 +344,9 @@ export function ChatWindow({
   const resolveConfirmation = async (decision: "approve" | "reject", formAnswers?: Record<string, string>) => {
     if (!pendingConfirmation || resolvingConfirmation) return;
     setResolvingConfirmation(true);
-    setPendingConfirmation(null);
+    queryClient.setQueryData<ConversationQueryData>(conversationQueryKey, (old) =>
+      old ? { ...old, pendingToolConfirmation: null } : old,
+    );
     try {
       await runStream(
         `/api/v1/conversations/${conversationId}/tool-confirmations/${pendingConfirmation.id}/${decision}`,
@@ -426,6 +488,19 @@ export function ChatWindow({
                         </a>
                       );
                     })}
+                  </div>
+                )}
+                {(message.generatedFileIds?.length ?? 0) > 0 && (
+                  <div className="mt-1 flex flex-wrap justify-start gap-2">
+                    {message.generatedFileIds!.map((fileId) => (
+                      <a
+                        key={fileId}
+                        href={`/api/v1/generated-files/${fileId}/download`}
+                        className="rounded border border-border bg-surface-subtle px-2 py-1 text-xs text-ink underline"
+                      >
+                        {generatedFileMeta[fileId]?.title ?? "Documento generado"}
+                      </a>
+                    ))}
                   </div>
                 )}
                 {message.role === "assistant" && message.status === "COMPLETED" && (

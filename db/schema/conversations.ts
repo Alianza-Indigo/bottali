@@ -75,6 +75,7 @@ export const messages = pgTable(
       .notNull()
       .default([]),
     attachedFileIds: jsonb("attached_file_ids").$type<string[]>().notNull().default([]),
+    generatedFileIds: jsonb("generated_file_ids").$type<string[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -166,6 +167,10 @@ export const toolCallConfirmations = pgTable(
       /** Tool calls from the same round as the paused one, not yet processed — the paused
        * call itself is NOT included (it's the top-level toolCallId/toolName/argumentsJson). */
       remainingCalls: Array<{ id: string; name: string; arguments: string }>;
+      /** Documents produced by generate_text_document calls earlier in this same turn,
+       * carried across the pause so they're still persisted once the turn finally finishes
+       * (a turn can call the tool, then hit a confirmation-requiring tool, then resume). */
+      generatedDocuments: Array<{ title: string; text: string; mimeType: string }>;
     }>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),

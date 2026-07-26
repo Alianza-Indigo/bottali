@@ -44,6 +44,14 @@ function hotp(secret: Buffer, counter: number): string {
   return (binary % 10 ** TOTP_DIGITS).toString().padStart(TOTP_DIGITS, "0");
 }
 
+/** Computes the current code for a secret — used by tests/tooling that need to actually log
+ * in as an MFA-enabled account, mirroring what a real authenticator app would show. */
+export function generateTotpCode(base32Secret: string, at: number = Date.now()): string {
+  const secret = base32Decode(base32Secret);
+  const counter = Math.floor(at / 1000 / TOTP_STEP_SECONDS);
+  return hotp(secret, counter);
+}
+
 /** Accepts the current step and one step of clock drift on either side. */
 export function verifyTotpCode(base32Secret: string, code: string, at: number = Date.now()): boolean {
   if (!/^\d{6}$/.test(code)) return false;

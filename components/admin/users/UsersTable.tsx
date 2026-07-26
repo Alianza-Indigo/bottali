@@ -40,6 +40,19 @@ export function UsersTable({ users }: { users: UserRow[] }) {
     }
   };
 
+  const revokeSessions = async (userId: string) => {
+    setBusyId(`${userId}:revoke-sessions`);
+    setError(null);
+    try {
+      await apiPost(`/api/v1/admin/users/${userId}/sessions/revoke`);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "No fue posible cerrar las sesiones.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <div>
       {error && (
@@ -71,6 +84,14 @@ export function UsersTable({ users }: { users: UserRow[] }) {
                   Bloquear
                 </Button>
               )}
+              <Button
+                size="sm"
+                variant="ghost"
+                loading={busyId === `${user.id}:revoke-sessions`}
+                onClick={() => revokeSessions(user.id)}
+              >
+                Cerrar sesiones
+              </Button>
             </div>
           </li>
         ))}

@@ -2,9 +2,10 @@ import "server-only";
 import { cookies, headers } from "next/headers";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { sessions, users, userProfiles } from "@/db/schema";
+import { sessions, users, userProfiles, mfaCredentials } from "@/db/schema";
 import { getEnv } from "@/lib/env";
 import { generateOpaqueToken, hashToken } from "./tokens";
+import { CSRF_COOKIE_NAME } from "@/lib/security/csrf";
 
 export interface SessionUser {
   id: string;
@@ -34,7 +35,24 @@ export async function getRequestMetadata() {
   };
 }
 
-export async function createSession(userId: string): Promise<string> {
+export async function isMfaEnabled(userId: string): Promise<boolean> {
+  const rows = await db
+    .select({ enabledAt: mfaCredentials.enabledAt })
+    .from(mfaCredentials)
+    .where(eq(mfaCredentials.userId, userId))
+    .limit(1);
+  return Boolean(rows[0]?.enabledAt);
+}
+
+/**
+ * §28 MFA: when `requireMfaVerification` is set (the caller already confirmed the password
+ * AND that this user has MFA enabled), the session row is created but left "pending" —
+ * `mfaVerifiedAt` stays null, and getCurrentSession() treats that as not-logged-in for a
+ * user with MFA enabled. The cookie still gets set so the pending session can be found again
+ * by the mfa/login-verify endpoint, but nothing else in the app can use it until that
+ * endpoint calls markSessionMfaVerified().
+ */
+export async function createSession(userId: string, options?: { requireMfaVerification?: boolean }): Promise<string> {
   const env = getEnv();
   const token = generateOpaqueToken();
   const { ipTruncated, userAgent } = await getRequestMetadata();
@@ -46,6 +64,7 @@ export async function createSession(userId: string): Promise<string> {
     ipTruncated,
     userAgent,
     expiresAt,
+    mfaVerifiedAt: options?.requireMfaVerification ? null : new Date(),
   });
 
   const cookieStore = await cookies();
@@ -56,22 +75,27 @@ export async function createSession(userId: string): Promise<string> {
     path: "/",
     maxAge: env.SESSION_TTL_SECONDS,
   });
+  // Deliberately NOT httpOnly — client JS must be able to read this to echo it back as the
+  // X-CSRF-Token header (see lib/api/client.ts and middleware.ts).
+  cookieStore.set(CSRF_COOKIE_NAME, generateOpaqueToken(), {
+    httpOnly: false,
+    secure: env.APP_ENV !== "development",
+    sameSite: "lax",
+    path: "/",
+    maxAge: env.SESSION_TTL_SECONDS,
+  });
 
   return token;
 }
 
-export async function getCurrentSession(): Promise<SessionUser | null> {
-  const env = getEnv();
-  const cookieStore = await cookies();
-  const token = cookieStore.get(env.AUTH_COOKIE_NAME)?.value;
-  if (!token) return null;
-
+async function loadSessionRowByToken(token: string) {
   const tokenHash = hashToken(token);
   const rows = await db
     .select({
       sessionId: sessions.id,
       status: sessions.status,
       expiresAt: sessions.expiresAt,
+      mfaVerifiedAt: sessions.mfaVerifiedAt,
       userId: users.id,
       email: users.email,
       userStatus: users.status,
@@ -90,6 +114,20 @@ export async function getCurrentSession(): Promise<SessionUser | null> {
   if (row.userStatus === "SUSPENDED" || row.userStatus === "BLOCKED" || row.userStatus === "DELETED") {
     return null;
   }
+  return row;
+}
+
+export async function getCurrentSession(): Promise<SessionUser | null> {
+  const env = getEnv();
+  const cookieStore = await cookies();
+  const token = cookieStore.get(env.AUTH_COOKIE_NAME)?.value;
+  if (!token) return null;
+
+  const row = await loadSessionRowByToken(token);
+  if (!row) return null;
+  // A session pending MFA verification grants nothing — only mfa/login-verify's
+  // getPendingMfaSession() below can see it, and only until the code is confirmed.
+  if (!row.mfaVerifiedAt) return null;
 
   // Fire-and-forget last-seen bump; never block the request on it.
   void db
@@ -107,6 +145,24 @@ export async function getCurrentSession(): Promise<SessionUser | null> {
   };
 }
 
+/** Used only by POST /api/v1/auth/mfa/login-verify: finds the session pending a TOTP code,
+ * regardless of mfaVerifiedAt — that's the one field this function's caller is trying to
+ * set. Never exposed as a general-purpose session lookup. */
+export async function getPendingMfaSession(): Promise<{ sessionId: string; userId: string } | null> {
+  const env = getEnv();
+  const cookieStore = await cookies();
+  const token = cookieStore.get(env.AUTH_COOKIE_NAME)?.value;
+  if (!token) return null;
+
+  const row = await loadSessionRowByToken(token);
+  if (!row || row.mfaVerifiedAt) return null;
+  return { sessionId: row.sessionId, userId: row.userId };
+}
+
+export async function markSessionMfaVerified(sessionId: string): Promise<void> {
+  await db.update(sessions).set({ mfaVerifiedAt: new Date() }).where(eq(sessions.id, sessionId));
+}
+
 export async function destroyCurrentSession(): Promise<void> {
   const env = getEnv();
   const cookieStore = await cookies();
@@ -118,6 +174,7 @@ export async function destroyCurrentSession(): Promise<void> {
       .where(eq(sessions.tokenHash, hashToken(token)));
   }
   cookieStore.delete(env.AUTH_COOKIE_NAME);
+  cookieStore.delete(CSRF_COOKIE_NAME);
 }
 
 export async function revokeAllUserSessions(userId: string): Promise<void> {

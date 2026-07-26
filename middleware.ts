@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, isCsrfExempt, isMutatingMethod } from "@/lib/security/csrf";
 
 // Coarse, cookie-presence-only redirect for UX. This runs on the Edge runtime and has
 // no database access, so it MUST NOT be treated as the authorization boundary — every
@@ -42,6 +43,22 @@ export function middleware(request: NextRequest) {
       const loginUrl = new URL("/login", request.url);
       loginUrl.searchParams.set("next", pathname);
       const response = NextResponse.redirect(loginUrl);
+      response.headers.set(REQUEST_ID_HEADER, requestId);
+      return response;
+    }
+  }
+
+  // CSRF (§29): double-submit-cookie check for every state-changing API call. Real
+  // authorization still happens server-side per route — this only rejects requests whose
+  // CSRF cookie/header pair doesn't match, which a cross-site attacker can never produce.
+  if (pathname.startsWith("/api/") && isMutatingMethod(request.method) && !isCsrfExempt(pathname)) {
+    const cookieToken = request.cookies.get(CSRF_COOKIE_NAME)?.value;
+    const headerToken = request.headers.get(CSRF_HEADER_NAME);
+    if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+      const response = NextResponse.json(
+        { error: { code: "CSRF_VALIDATION_FAILED", message: "Token CSRF ausente o inválido." } },
+        { status: 403 },
+      );
       response.headers.set(REQUEST_ID_HEADER, requestId);
       return response;
     }

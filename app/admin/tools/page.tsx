@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { DuplicateToolButton } from "@/components/admin/tools/DuplicateToolButton";
 
 export const metadata = { title: "Herramientas — Admin" };
 
@@ -59,7 +60,10 @@ export default async function AdminToolsPage() {
                   </Link>
                   <p className="text-xs text-ink-faint">{tool.slug}</p>
                 </div>
-                <Badge tone={STATUS_TONE[tool.status] ?? "neutral"}>{tool.status}</Badge>
+                <div className="flex items-center gap-2">
+                  <Badge tone={STATUS_TONE[tool.status] ?? "neutral"}>{tool.status}</Badge>
+                  <DuplicateToolButton toolId={tool.id} sourceSlug={tool.slug} />
+                </div>
               </li>
             ))}
           </ul>

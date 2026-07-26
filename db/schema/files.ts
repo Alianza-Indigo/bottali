@@ -45,6 +45,7 @@ export const generatedFiles = pgTable(
     }),
     messageId: uuid("message_id").references(() => messages.id, { onDelete: "set null" }),
     kind: varchar("kind", { length: 40 }).notNull(),
+    title: varchar("title", { length: 255 }).notNull(),
     blobKey: varchar("blob_key", { length: 512 }).notNull(),
     mimeType: varchar("mime_type", { length: 120 }).notNull(),
     sizeBytes: integer("size_bytes").notNull(),

@@ -15,27 +15,87 @@ import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
 import { Skeleton } from "@/components/ui/Skeleton";
 
+function MfaStep({ onVerified }: { onVerified: () => void }) {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiPost("/api/v1/auth/mfa/login-verify", { code });
+      onVerified();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Ocurrió un error inesperado.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <h1 className="text-lg font-semibold text-ink">Verificación en dos pasos</h1>
+      </CardHeader>
+      <CardBody>
+        <form onSubmit={submit} className="flex flex-col gap-4">
+          {error && <Alert tone="danger">{error}</Alert>}
+          <div>
+            <Label htmlFor="mfa-code">Código de tu aplicación de autenticación</Label>
+            <Input
+              id="mfa-code"
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              placeholder="123456 o un código de recuperación"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
+          </div>
+          <Button type="submit" loading={submitting} className="w-full">
+            Verificar
+          </Button>
+        </form>
+      </CardBody>
+    </Card>
+  );
+}
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [serverError, setServerError] = useState<string | null>(null);
+  const [mfaPending, setMfaPending] = useState(false);
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<LoginInput>({ resolver: zodResolver(loginSchema) });
 
+  const goToDestination = () => {
+    router.push(searchParams.get("next") || "/dashboard");
+    router.refresh();
+  };
+
   const onSubmit = async (data: LoginInput) => {
     setServerError(null);
     try {
-      await apiPost("/api/v1/auth/login", data);
-      router.push(searchParams.get("next") || "/dashboard");
-      router.refresh();
+      const result = await apiPost<{ mfaRequired?: boolean }>("/api/v1/auth/login", data);
+      if (result.mfaRequired) {
+        setMfaPending(true);
+        return;
+      }
+      goToDestination();
     } catch (error) {
       if (error instanceof ApiError) setServerError(error.message);
       else setServerError("Ocurrió un error inesperado.");
     }
   };
+
+  if (mfaPending) {
+    return <MfaStep onVerified={goToDestination} />;
+  }
 
   return (
     <Card>

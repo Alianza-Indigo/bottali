@@ -1,3 +1,21 @@
+const CSRF_COOKIE_NAME = "crisis_csrf";
+const CSRF_HEADER_NAME = "x-csrf-token";
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+/** For the few call sites that use the raw `fetch()` API directly instead of apiFetch
+ * (streaming POSTs in ChatWindow, raw-bytes upload-complete calls) — same CSRF token,
+ * spread into that request's own headers. */
+export function csrfHeaders(): Record<string, string> {
+  const token = readCookie(CSRF_COOKIE_NAME);
+  return token ? { [CSRF_HEADER_NAME]: token } : {};
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -19,9 +37,13 @@ export async function apiFetch<T>(input: string, init?: RequestInit): Promise<T>
   // sets its own "multipart/form-data; boundary=..." header, which forcing JSON here would
   // override and break.
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
+  const method = (init?.method ?? "GET").toUpperCase();
+  const extraHeaders = MUTATING_METHODS.has(method) ? csrfHeaders() : {};
   const res = await fetch(input, {
     ...init,
-    headers: isFormData ? init?.headers : { "Content-Type": "application/json", ...init?.headers },
+    headers: isFormData
+      ? { ...extraHeaders, ...init?.headers }
+      : { "Content-Type": "application/json", ...extraHeaders, ...init?.headers },
   });
 
   if (!res.ok) {

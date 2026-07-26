@@ -50,6 +50,20 @@
       "when": 1785096643363,
       "tag": "0006_ordinary_manta",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785099611506,
+      "tag": "0007_cooing_red_wolf",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785100832166,
+      "tag": "0008_stormy_prism",
+      "breakpoints": true
     }
   ]
 }

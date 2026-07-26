@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiPost, ApiError } from "@/lib/api/client";
+import { apiPost, ApiError, csrfHeaders } from "@/lib/api/client";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
 
@@ -25,6 +25,7 @@ export function KnowledgeDocumentUploader({ knowledgeBaseId }: { knowledgeBaseId
       const bytes = await file.arrayBuffer();
       const res = await fetch(`/api/v1/admin/knowledge-documents/${documentId}/upload-complete`, {
         method: "POST",
+        headers: csrfHeaders(),
         body: bytes,
       });
       if (!res.ok) {

@@ -25,9 +25,18 @@ import {
   markConfirmationApproved,
 } from "./tool-confirmations";
 import { retrieveRelevantChunks, buildKnowledgeContextBlock } from "@/lib/knowledge/retrieval";
-import { attachFilesToMessage } from "@/lib/files/service";
+import { attachFilesToMessage, persistGeneratedDocument } from "@/lib/files/service";
 import { recordAuditEvent } from "@/lib/audit/log";
 import { AppError, BudgetExceededError, ForbiddenError, NotFoundError, RateLimitError } from "@/lib/utils/errors";
+
+/** A document produced by generate_text_document during a turn, collected so
+ * finalizeGeneration can persist it (§17/§36) once the assistant message it belongs to
+ * actually exists. */
+interface GeneratedDocumentDraft {
+  title: string;
+  text: string;
+  mimeType: string;
+}
 
 export type StreamEvent =
   | { type: "delta"; text: string }
@@ -137,6 +146,7 @@ async function executeToolCallForPipeline(
   context: { userId: string; conversationId: string; toolId: string },
   allowedToolNames: string[],
   externalApiEndpoints: ExternalApiEndpoint[],
+  generatedDocuments: GeneratedDocumentDraft[],
 ): Promise<string> {
   let parsedInput: unknown;
   try {
@@ -157,6 +167,14 @@ async function executeToolCallForPipeline(
 
   try {
     const result = await executeInternalTool(call.name, parsedInput, context, allowedToolNames);
+    if (call.name === "generate_text_document" && result.success && typeof result.output?.text === "string") {
+      const rawTitle = (parsedInput as { title?: unknown } | null)?.title;
+      generatedDocuments.push({
+        title: typeof rawTitle === "string" ? rawTitle : "Documento",
+        text: result.output.text,
+        mimeType: typeof result.output.mimeType === "string" ? result.output.mimeType : "text/plain",
+      });
+    }
     return JSON.stringify(result);
   } catch (error) {
     return JSON.stringify({ error: error instanceof Error ? error.message : "La herramienta interna falló al ejecutarse." });
@@ -183,6 +201,7 @@ type ToolRoundLoopOutcome =
       accumulatedLatencyMs: number;
       finalResult: GenerationResult | null;
       cancelled: boolean;
+      generatedDocuments: GeneratedDocumentDraft[];
     }
   | {
       kind: "confirmation_required";
@@ -193,6 +212,7 @@ type ToolRoundLoopOutcome =
       call: ToolCall;
       /** Tool calls from the SAME round as `call`, positioned after it, not yet processed. */
       remainingCalls: ToolCall[];
+      generatedDocuments: GeneratedDocumentDraft[];
     };
 
 interface ToolRoundLoopParams {
@@ -213,6 +233,9 @@ interface ToolRoundLoopParams {
   accumulatedLatencyMs: number;
   /** When resuming after a confirmation, the calls still owed from that same round. */
   pendingCalls?: ToolCall[];
+  /** Documents generated earlier in this same turn (e.g. before an intervening
+   * confirmation-requiring call) — mutated in place as further calls execute. */
+  generatedDocuments: GeneratedDocumentDraft[];
 }
 
 /**
@@ -235,7 +258,15 @@ async function runToolRoundLoop(p: ToolRoundLoopParams): Promise<ToolRoundLoopOu
 
   for (;;) {
     if (p.signal.aborted) {
-      return { kind: "final", generationMessages, accumulatedUsage, accumulatedLatencyMs: latencySoFar(), finalResult: null, cancelled: true };
+      return {
+        kind: "final",
+        generationMessages,
+        accumulatedUsage,
+        accumulatedLatencyMs: latencySoFar(),
+        finalResult: null,
+        cancelled: true,
+        generatedDocuments: p.generatedDocuments,
+      };
     }
 
     let toolCallsToProcess: ToolCall[];
@@ -257,7 +288,15 @@ async function runToolRoundLoop(p: ToolRoundLoopParams): Promise<ToolRoundLoopOu
       accumulatedUsage.outputTokens += result.usage.outputTokens;
 
       if (!(result.finishReason === "tool_calls" && result.toolCalls?.length && !isLastRound)) {
-        return { kind: "final", generationMessages, accumulatedUsage, accumulatedLatencyMs: latencySoFar(), finalResult: result, cancelled: false };
+        return {
+          kind: "final",
+          generationMessages,
+          accumulatedUsage,
+          accumulatedLatencyMs: latencySoFar(),
+          finalResult: result,
+          cancelled: false,
+          generatedDocuments: p.generatedDocuments,
+        };
       }
 
       generationMessages = [...generationMessages, { role: "assistant", content: result.content, toolCalls: result.toolCalls }];
@@ -275,9 +314,16 @@ async function runToolRoundLoop(p: ToolRoundLoopParams): Promise<ToolRoundLoopOu
           round,
           call,
           remainingCalls: toolCallsToProcess.slice(i + 1),
+          generatedDocuments: p.generatedDocuments,
         };
       }
-      const toolResultContent = await executeToolCallForPipeline(call, p.context, p.allowedToolNames, p.externalApiEndpoints);
+      const toolResultContent = await executeToolCallForPipeline(
+        call,
+        p.context,
+        p.allowedToolNames,
+        p.externalApiEndpoints,
+        p.generatedDocuments,
+      );
       generationMessages = [...generationMessages, { role: "tool", content: wrapToolResultForModel(toolResultContent), toolCallId: call.id }];
     }
 
@@ -301,6 +347,7 @@ interface FinalizeParams {
   latencyMs: number;
   moderationResult: unknown;
   blocked: boolean;
+  generatedDocuments?: GeneratedDocumentDraft[];
 }
 
 /**
@@ -351,6 +398,27 @@ async function* finalizeGeneration(p: FinalizeParams): AsyncGenerator<StreamEven
     })
     .returning({ id: messages.id });
   if (!assistantMessage) throw new Error("No fue posible guardar la respuesta.");
+
+  // Persist any documents generate_text_document produced during this turn (§17/§36) now
+  // that the assistant message they belong to actually has an id. Skipped for a BLOCKED
+  // reply — the file would otherwise let the user recover content output moderation hid.
+  if (!p.blocked && p.generatedDocuments && p.generatedDocuments.length > 0) {
+    const fileIds: string[] = [];
+    for (const doc of p.generatedDocuments) {
+      const file = await persistGeneratedDocument({
+        userId,
+        toolId: tool.id,
+        conversationId: conversation.id,
+        messageId: assistantMessage.id,
+        kind: "text_document",
+        title: doc.title,
+        text: doc.text,
+        mimeType: doc.mimeType,
+      });
+      fileIds.push(file.id);
+    }
+    await db.update(messages).set({ generatedFileIds: fileIds }).where(eq(messages.id, assistantMessage.id));
+  }
 
   await reconcileUsage({
     reservationId,
@@ -518,6 +586,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
   let blocked = false;
   let moderationResult: unknown = null;
   let paused = false;
+  let generatedDocuments: GeneratedDocumentDraft[] = [];
 
   const outputModeration = config.safetyPolicies?.outputModeration ?? true;
   const MODERATION_WINDOW_CHARS = 120;
@@ -568,6 +637,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
         round: 0,
         accumulatedUsage: { inputTokens: 0, outputTokens: 0 },
         accumulatedLatencyMs: 0,
+        generatedDocuments: [],
       });
 
       if (outcome.kind === "confirmation_required") {
@@ -588,6 +658,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
               accumulatedLatencyMs: outcome.accumulatedLatencyMs,
               userMessageContent,
               remainingCalls: outcome.remainingCalls,
+              generatedDocuments: outcome.generatedDocuments,
             },
             expiresAt: computeConfirmationExpiry(),
           })
@@ -597,6 +668,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
         paused = true;
       } else {
         usage = outcome.accumulatedUsage;
+        generatedDocuments = outcome.generatedDocuments;
         if (outcome.cancelled) {
           finishReason = "cancelled";
         } else {
@@ -676,6 +748,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
     latencyMs: Date.now() - startedAt,
     moderationResult,
     blocked,
+    generatedDocuments,
   });
 }
 
@@ -827,6 +900,14 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
     ...buildExternalApiToolSpecs(externalApiEndpoints),
   ];
 
+  // confirmation.generationStateSnapshot is the in-memory row from the claim above — reading
+  // it here is unaffected by the DB writes just below, which target the same row but don't
+  // retroactively change this already-fetched object.
+  const snapshot = confirmation.generationStateSnapshot;
+  if (!snapshot) throw new Error("La confirmación reclamada no tiene un snapshot de generación (invariante violada).");
+  // Defaults to [] for a snapshot written before generatedDocuments existed in this jsonb shape.
+  const generatedDocuments: GeneratedDocumentDraft[] = snapshot.generatedDocuments ?? [];
+
   let toolResultContent: string;
   if (params.decision !== "approve") {
     toolResultContent = JSON.stringify({ error: "El usuario rechazó la ejecución de esta herramienta." });
@@ -834,14 +915,9 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
     // The form's answers ARE the result — there is no separate execution step to run.
     toolResultContent = JSON.stringify({ success: true, output: { answers: params.formAnswers ?? {} } });
   } else {
-    toolResultContent = await executeToolCallForPipeline(call, context, allowedToolNames, externalApiEndpoints);
+    toolResultContent = await executeToolCallForPipeline(call, context, allowedToolNames, externalApiEndpoints, generatedDocuments);
   }
 
-  // confirmation.generationStateSnapshot is the in-memory row from the claim above — reading
-  // it here is unaffected by the DB writes just below, which target the same row but don't
-  // retroactively change this already-fetched object.
-  const snapshot = confirmation.generationStateSnapshot;
-  if (!snapshot) throw new Error("La confirmación reclamada no tiene un snapshot de generación (invariante violada).");
   const generationMessages: GenerationMessage[] = [
     // Round-tripped through jsonb, so the stored shape is only structurally typed — trust it,
     // since nothing but runToolRoundLoop/this module ever writes a snapshot row.
@@ -878,6 +954,7 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
       accumulatedUsage: snapshot.accumulatedUsage,
       accumulatedLatencyMs: snapshot.accumulatedLatencyMs,
       pendingCalls: snapshot.remainingCalls,
+      generatedDocuments,
     });
 
     if (outcome.kind === "confirmation_required") {
@@ -898,6 +975,7 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
             accumulatedLatencyMs: outcome.accumulatedLatencyMs,
             userMessageContent: snapshot.userMessageContent,
             remainingCalls: outcome.remainingCalls,
+            generatedDocuments: outcome.generatedDocuments,
           },
           expiresAt: computeConfirmationExpiry(),
         })
@@ -940,6 +1018,7 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
       latencyMs: outcome.accumulatedLatencyMs + (Date.now() - startedAt),
       moderationResult,
       blocked,
+      generatedDocuments: outcome.generatedDocuments,
     });
   } catch (error) {
     await releaseReservation(confirmation.reservationId);
