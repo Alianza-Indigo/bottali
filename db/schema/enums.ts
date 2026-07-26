@@ -145,6 +145,10 @@ export const riskLevelEnum = pgEnum("risk_level", ["LOW", "MEDIUM", "HIGH"]);
 
 export const toolCallConfirmationStatusEnum = pgEnum("tool_call_confirmation_status", [
   "PENDING",
+  /** Atomically claimed by exactly one approve request, momentarily, while the tool actually
+   * runs — this is what makes concurrent approve/reject/expire attempts mutually exclusive
+   * instead of racing (see lib/conversations/tool-confirmations.ts's claim functions). */
+  "EXECUTING",
   "APPROVED",
   "REJECTED",
   "EXPIRED",

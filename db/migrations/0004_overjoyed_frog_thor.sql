@@ -1,0 +1,1 @@
+ALTER TYPE "public"."tool_call_confirmation_status" ADD VALUE 'EXECUTING' BEFORE 'APPROVED';

@@ -238,4 +238,79 @@ describe("tool-call confirmation cycle (real Postgres, fake LLM provider)", () =
 
     await db.delete(tools).where(eq(tools.id, toolId));
   });
+
+  it("concurrent double-approval executes the tool exactly once (atomic claim, not read-then-write)", async () => {
+    const { toolId, conversation } = await setUpConversation();
+    const controller = new AbortController();
+
+    const pauseEvents = await collect(
+      sendMessage({
+        conversationId: conversation.id,
+        userId: actorId,
+        content: 'HERRAMIENTA:calculator {"expression":"3*3"}',
+        signal: controller.signal,
+      }),
+    );
+    const confirmationId = (pauseEvents[0] as Extract<StreamEvent, { type: "confirmation_required" }>).confirmationId;
+
+    // Both requests race against the SAME row — a plain read-check-execute-write would let
+    // both pass the PENDING check and both run the tool. Only the atomic
+    // UPDATE...WHERE status='PENDING'...RETURNING claim can make exactly one of these win.
+    const [resultA, resultB] = await Promise.allSettled([
+      collect(resumeAfterToolConfirmation({ confirmationId, userId: actorId, decision: "approve", signal: controller.signal })),
+      collect(resumeAfterToolConfirmation({ confirmationId, userId: actorId, decision: "approve", signal: controller.signal })),
+    ]);
+
+    const outcomes = [resultA, resultB];
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    const rejected = outcomes.find((o) => o.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason?.message).toMatch(/ya fue resuelta/);
+
+    const { messages: msgs } = await getConversationWithMessages(conversation.id, actorId);
+    const assistantMessages = msgs.filter((m) => m.role === "assistant");
+    // The real proof it only ran once: exactly one assistant reply, not two.
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]!.content).toContain("9");
+
+    await db.delete(tools).where(eq(tools.id, toolId));
+  });
+
+  it("a race between approval and a superseding new message never leaves an inconsistent reservation", async () => {
+    const { toolId, conversation } = await setUpConversation();
+    const controller = new AbortController();
+
+    const pauseEvents = await collect(
+      sendMessage({
+        conversationId: conversation.id,
+        userId: actorId,
+        content: 'HERRAMIENTA:calculator {"expression":"5*5"}',
+        signal: controller.signal,
+      }),
+    );
+    const confirmationId = (pauseEvents[0] as Extract<StreamEvent, { type: "confirmation_required" }>).confirmationId;
+
+    const [approveResult, newMessageResult] = await Promise.allSettled([
+      collect(resumeAfterToolConfirmation({ confirmationId, userId: actorId, decision: "approve", signal: controller.signal })),
+      collect(sendMessage({ conversationId: conversation.id, userId: actorId, content: "Mejor otra cosa.", signal: controller.signal })),
+    ]);
+
+    // Sending a new message must never itself fail, regardless of how the race resolves.
+    expect(newMessageResult.status).toBe("fulfilled");
+
+    const confirmationRows = await db.select().from(toolCallConfirmations).where(eq(toolCallConfirmations.id, confirmationId)).limit(1);
+    const finalStatus = confirmationRows[0]!.status;
+    expect(["APPROVED", "EXPIRED"]).toContain(finalStatus);
+
+    const reservationRows = await db.select().from(usageReservations).where(eq(usageReservations.id, confirmationRows[0]!.reservationId)).limit(1);
+    // The invariant the race must never break: an APPROVED (reconciled) reservation can
+    // never end up RELEASED by a stale expiry that raced behind it, and vice versa.
+    if (finalStatus === "APPROVED") {
+      expect(reservationRows[0]!.status).toBe("RECONCILED");
+      expect(approveResult.status).toBe("fulfilled");
+    } else {
+      expect(reservationRows[0]!.status).toBe("RELEASED");
+    }
+
+    await db.delete(tools).where(eq(tools.id, toolId));
+  });
 });

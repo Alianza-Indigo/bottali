@@ -1,4 +1,4 @@
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, gt, lt } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { toolCallConfirmations } from "@/db/schema";
 import { releaseReservation } from "./limits";
@@ -13,12 +13,82 @@ export function computeConfirmationExpiry(now: Date = new Date()): Date {
   return new Date(now.getTime() + CONFIRMATION_TTL_MS);
 }
 
+type ToolCallConfirmationRow = typeof toolCallConfirmations.$inferSelect;
+
+/**
+ * Atomically claims a PENDING confirmation for approval, transitioning it to EXECUTING in
+ * the same statement that checks it's still claimable (WHERE status='PENDING' AND not
+ * expired). Two concurrent approve requests can both pass a plain SELECT-then-check, but
+ * only one UPDATE...WHERE...RETURNING can actually flip the row — the loser gets an empty
+ * result instead of also executing the tool. Returns null if it wasn't claimable (already
+ * resolved, expired, wrong user, or doesn't exist) — callers distinguish why via a
+ * read-only follow-up, since that no longer affects correctness once the claim itself is
+ * atomic.
+ */
+export async function claimConfirmationForExecution(id: string, userId: string): Promise<ToolCallConfirmationRow | null> {
+  const rows = await db
+    .update(toolCallConfirmations)
+    .set({ status: "EXECUTING" })
+    .where(
+      and(
+        eq(toolCallConfirmations.id, id),
+        eq(toolCallConfirmations.userId, userId),
+        eq(toolCallConfirmations.status, "PENDING"),
+        gt(toolCallConfirmations.expiresAt, new Date()),
+      ),
+    )
+    .returning();
+  return rows[0] ?? null;
+}
+
+/** Same atomic-claim guarantee as claimConfirmationForExecution, but for rejection: since
+ * there's nothing to execute, the claim IS the final state — REJECTED directly, no
+ * intermediate EXECUTING needed. */
+export async function claimConfirmationForRejection(id: string, userId: string): Promise<ToolCallConfirmationRow | null> {
+  const rows = await db
+    .update(toolCallConfirmations)
+    .set({ status: "REJECTED", resolvedAt: new Date() })
+    .where(
+      and(
+        eq(toolCallConfirmations.id, id),
+        eq(toolCallConfirmations.userId, userId),
+        eq(toolCallConfirmations.status, "PENDING"),
+        gt(toolCallConfirmations.expiresAt, new Date()),
+      ),
+    )
+    .returning();
+  return rows[0] ?? null;
+}
+
+/** Finalizes an EXECUTING confirmation as APPROVED once its tool has actually run. Safe to
+ * call unconditionally — only the request holding the EXECUTING claim ever reaches here. */
+export async function markConfirmationApproved(id: string): Promise<void> {
+  await db.update(toolCallConfirmations).set({ status: "APPROVED", resolvedAt: new Date() }).where(eq(toolCallConfirmations.id, id));
+}
+
+/** Reads the current row purely to explain WHY a claim failed (not found / wrong owner /
+ * already resolved / expired) — the claim itself already resolved the actual race
+ * atomically, so this is diagnostic only and never the source of truth for state. */
+export async function getConfirmationById(id: string): Promise<ToolCallConfirmationRow | null> {
+  const rows = await db.select().from(toolCallConfirmations).where(eq(toolCallConfirmations.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Expires exactly one PENDING confirmation, atomically (WHERE status='PENDING'), and only
+ * releases its reservation if that transition actually happened here — a concurrent
+ * approve/reject that already moved it out of PENDING must NOT have its (possibly already
+ * reconciled) reservation clobbered by a stale expiry racing behind it.
+ */
 export async function expireSingleConfirmation(id: string, reservationId: string): Promise<void> {
-  await db
+  const rows = await db
     .update(toolCallConfirmations)
     .set({ status: "EXPIRED", resolvedAt: new Date() })
-    .where(and(eq(toolCallConfirmations.id, id), eq(toolCallConfirmations.status, "PENDING")));
-  await releaseReservation(reservationId);
+    .where(and(eq(toolCallConfirmations.id, id), eq(toolCallConfirmations.status, "PENDING")))
+    .returning({ id: toolCallConfirmations.id });
+  if (rows.length > 0) {
+    await releaseReservation(reservationId);
+  }
 }
 
 /** Called by the retention cron (§36): sweeps every PENDING confirmation whose expiresAt

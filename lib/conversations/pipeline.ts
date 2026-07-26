@@ -13,7 +13,15 @@ import { executeInternalTool } from "@/lib/ai/tools/execute";
 import { reconcileUsage, releaseReservation, reserveUsage } from "./limits";
 import { recordMemoryTurn, retrieveMemory } from "./memory";
 import { maybeGenerateTitle } from "./service";
-import { computeConfirmationExpiry, expirePendingConfirmationsForConversation, expireSingleConfirmation } from "./tool-confirmations";
+import {
+  claimConfirmationForExecution,
+  claimConfirmationForRejection,
+  computeConfirmationExpiry,
+  expirePendingConfirmationsForConversation,
+  expireSingleConfirmation,
+  getConfirmationById,
+  markConfirmationApproved,
+} from "./tool-confirmations";
 import { retrieveRelevantChunks, buildKnowledgeContextBlock } from "@/lib/knowledge/retrieval";
 import { recordAuditEvent } from "@/lib/audit/log";
 import { AppError, BudgetExceededError, ForbiddenError, NotFoundError, RateLimitError } from "@/lib/utils/errors";
@@ -714,15 +722,25 @@ export interface ResolveToolConfirmationParams {
  * a human approving an action is a genuinely separate request, potentially minutes later.
  */
 export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmationParams): AsyncGenerator<StreamEvent> {
-  const rows = await db.select().from(toolCallConfirmations).where(eq(toolCallConfirmations.id, params.confirmationId)).limit(1);
-  const confirmation = rows[0];
-  if (!confirmation) throw new NotFoundError("Confirmación no encontrada.");
-  if (confirmation.userId !== params.userId) throw new ForbiddenError("No puedes resolver esta confirmación.");
-  if (confirmation.status !== "PENDING") {
-    throw new AppError("Esta confirmación ya fue resuelta.", "CONFIRMATION_ALREADY_RESOLVED", 409);
-  }
-  if (confirmation.expiresAt.getTime() < Date.now()) {
-    await expireSingleConfirmation(confirmation.id, confirmation.reservationId);
+  // Atomic claim (§15 concurrency fix): a plain read-then-check-then-write here would let
+  // two concurrent approve requests both observe PENDING and both execute the tool. The
+  // UPDATE...WHERE status='PENDING'...RETURNING is the actual mutual-exclusion boundary —
+  // only the request that gets a row back may proceed; the loser (a genuine double-click,
+  // a retried request, or a race against expiry) gets a clean "already resolved" error
+  // below instead of a second real execution.
+  const confirmation =
+    params.decision === "approve"
+      ? await claimConfirmationForExecution(params.confirmationId, params.userId)
+      : await claimConfirmationForRejection(params.confirmationId, params.userId);
+
+  if (!confirmation) {
+    const existing = await getConfirmationById(params.confirmationId);
+    if (!existing) throw new NotFoundError("Confirmación no encontrada.");
+    if (existing.userId !== params.userId) throw new ForbiddenError("No puedes resolver esta confirmación.");
+    if (existing.status !== "PENDING") {
+      throw new AppError("Esta confirmación ya fue resuelta.", "CONFIRMATION_ALREADY_RESOLVED", 409);
+    }
+    await expireSingleConfirmation(existing.id, existing.reservationId);
     throw new AppError("Esta confirmación expiró; el turno ya no puede reanudarse.", "CONFIRMATION_EXPIRED", 409);
   }
 
@@ -741,10 +759,12 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
       ? await executeToolCallForPipeline(call, context, allowedToolNames)
       : JSON.stringify({ error: "El usuario rechazó la ejecución de esta herramienta." });
 
-  await db
-    .update(toolCallConfirmations)
-    .set({ status: params.decision === "approve" ? "APPROVED" : "REJECTED", resolvedAt: new Date() })
-    .where(eq(toolCallConfirmations.id, confirmation.id));
+  // Only "approve" needs a follow-up write: this request already holds the exclusive
+  // EXECUTING claim, so finalizing to APPROVED here is safe unconditionally. "reject" was
+  // already finalized to REJECTED by the atomic claim itself — there was nothing to execute.
+  if (params.decision === "approve") {
+    await markConfirmationApproved(confirmation.id);
+  }
 
   const snapshot = confirmation.generationStateSnapshot;
   const generationMessages: GenerationMessage[] = [
