@@ -7,7 +7,15 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { Card } from "@/components/ui/Card";
 import { Alert } from "@/components/ui/Alert";
+import { VoiceRecorderButton } from "./VoiceRecorderButton";
+import { VoicePlaybackButton } from "./VoicePlaybackButton";
 import type { ToolChatInfo } from "./ChatPageClient";
+
+interface VoiceOption {
+  id: string;
+  name: string;
+  language: string;
+}
 
 interface MessageRow {
   id: string;
@@ -35,8 +43,20 @@ export function ChatWindow({
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [liveStatus, setLiveStatus] = useState("");
+  const [voices, setVoices] = useState<VoiceOption[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const listEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!tool.capabilities.voiceOutput) return;
+    let cancelled = false;
+    apiFetch<{ voices: VoiceOption[] }>("/api/v1/voices").then((res) => {
+      if (!cancelled) setVoices(res.voices);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tool.capabilities.voiceOutput]);
 
   const loadMessages = async () => {
     const res = await apiFetch<{ messages: MessageRow[] }>(`/api/v1/conversations/${conversationId}`);
@@ -253,6 +273,9 @@ export function ChatWindow({
                     )}
                   </div>
                 )}
+                {message.role === "assistant" && message.status === "COMPLETED" && tool.capabilities.voiceOutput && voices.length > 0 && (
+                  <VoicePlaybackButton text={message.content} voices={voices} />
+                )}
               </li>
             ))}
             {streamingText !== null && (
@@ -302,6 +325,12 @@ export function ChatWindow({
           className="flex-1"
           disabled={isGenerating}
         />
+        {tool.capabilities.voiceInput && (
+          <VoiceRecorderButton
+            disabled={isGenerating}
+            onTranscribed={(text) => setInput((prev) => (prev ? `${prev} ${text}` : text))}
+          />
+        )}
         {isGenerating ? (
           <Button type="button" variant="secondary" onClick={cancelGeneration}>
             Cancelar

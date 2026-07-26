@@ -26,7 +26,7 @@ async function globalSetup() {
   const [demoUser] = await db.select({ id: users.id }).from(users).where(eq(users.email, DEMO_CREDENTIALS.user.email)).limit(1);
   if (!demoUser) throw new Error("No fue posible localizar/crear el usuario demo para e2e.");
 
-  const { slug: toolSlug } = await createPublishedTestTool(demoUser.id, { pwa: true });
+  const { slug: toolSlug } = await createPublishedTestTool(demoUser.id, { pwa: true, voice: true });
 
   writeFileSync(E2E_CONTEXT_PATH, JSON.stringify({ toolSlug }, null, 2));
 }

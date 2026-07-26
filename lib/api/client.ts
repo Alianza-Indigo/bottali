@@ -15,9 +15,13 @@ interface ApiErrorBody {
 }
 
 export async function apiFetch<T>(input: string, init?: RequestInit): Promise<T> {
+  // A FormData body (file/audio uploads) must NOT get a manual Content-Type: the browser
+  // sets its own "multipart/form-data; boundary=..." header, which forcing JSON here would
+  // override and break.
+  const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const res = await fetch(input, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: isFormData ? init?.headers : { "Content-Type": "application/json", ...init?.headers },
   });
 
   if (!res.ok) {

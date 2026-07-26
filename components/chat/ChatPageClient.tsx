@@ -13,7 +13,7 @@ export interface ToolChatInfo {
   welcomeMessage: string;
   scopeNotice: string;
   suggestedQuestions: string[];
-  capabilities: { files: boolean; exportEnabled: boolean; feedback: boolean };
+  capabilities: { files: boolean; exportEnabled: boolean; feedback: boolean; voiceInput: boolean; voiceOutput: boolean };
 }
 
 export interface ConversationSummary {

@@ -52,10 +52,10 @@ const envSchema = z.object({
   MODERATION_PROVIDER: z.enum(["fake", "openai-compatible"]).default("fake"),
   MODERATION_API_KEY: z.string().optional(),
 
-  STT_PROVIDER: z.enum(["disabled", "openai-compatible"]).default("disabled"),
+  STT_PROVIDER: z.enum(["disabled", "fake", "openai-compatible"]).default("disabled"),
   STT_API_KEY: z.string().optional(),
 
-  TTS_PROVIDER: z.enum(["disabled", "openai-compatible"]).default("disabled"),
+  TTS_PROVIDER: z.enum(["disabled", "fake", "openai-compatible"]).default("disabled"),
   TTS_API_KEY: z.string().optional(),
 
   MAX_UPLOAD_BYTES: numberFromString(26214400),

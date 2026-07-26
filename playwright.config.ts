@@ -16,8 +16,13 @@ export default defineConfig({
   use: {
     baseURL: BASE_URL,
     trace: "retain-on-failure",
+    permissions: ["microphone"],
     launchOptions: {
       executablePath: "/opt/pw-browsers/chromium",
+      // Feeds a synthetic audio stream to getUserMedia and auto-grants the permission prompt,
+      // so the real MediaRecorder-based voice input flow can be exercised headlessly without
+      // OS-level audio hardware.
+      args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"],
     },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

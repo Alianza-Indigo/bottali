@@ -24,7 +24,7 @@ import type { BehaviorInput } from "@/lib/validation/tools";
  * test fixture so integration tests don't each re-implement the whole publish wizard. */
 export async function createPublishedTestTool(
   actorId: string,
-  overrides: Partial<Pick<BehaviorInput, "memoryMode">> & { rag?: boolean; pwa?: boolean } = {},
+  overrides: Partial<Pick<BehaviorInput, "memoryMode">> & { rag?: boolean; pwa?: boolean; voice?: boolean } = {},
 ): Promise<{ toolId: string; versionId: string; slug: string }> {
   await syncProvidersFromEnv(db);
   await seedDefaultLegalDocuments(db);
@@ -95,8 +95,8 @@ export async function createPublishedTestTool(
     {
       text: true,
       streaming: true,
-      voiceInput: false,
-      voiceOutput: false,
+      voiceInput: overrides.voice ?? false,
+      voiceOutput: overrides.voice ?? false,
       files: false,
       images: false,
       forms: false,

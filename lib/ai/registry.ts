@@ -9,6 +9,7 @@ import { FakeModerationProvider } from "./providers/fake-moderation";
 import { OpenAICompatibleModerationProvider } from "./providers/openai-compatible-moderation";
 import { DisabledSpeechToTextProvider, DisabledTextToSpeechProvider } from "./providers/disabled-voice";
 import { OpenAICompatibleSpeechToTextProvider, OpenAICompatibleTextToSpeechProvider } from "./providers/openai-compatible-voice";
+import { FakeSpeechToTextProvider, FakeTextToSpeechProvider } from "./providers/fake-voice";
 
 let llmProvider: LLMProvider | undefined;
 let llmFallbackProvider: LLMProvider | undefined;
@@ -88,6 +89,8 @@ export function getSTTProvider(): SpeechToTextProvider {
       baseUrl: env.LLM_API_BASE_URL,
       timeoutMs: 30000,
     });
+  } else if (env.STT_PROVIDER === "fake") {
+    sttProvider = new FakeSpeechToTextProvider();
   } else {
     sttProvider = new DisabledSpeechToTextProvider();
   }
@@ -103,6 +106,8 @@ export function getTTSProvider(): TextToSpeechProvider {
       baseUrl: env.LLM_API_BASE_URL,
       timeoutMs: 30000,
     });
+  } else if (env.TTS_PROVIDER === "fake") {
+    ttsProvider = new FakeTextToSpeechProvider();
   } else {
     ttsProvider = new DisabledTextToSpeechProvider();
   }

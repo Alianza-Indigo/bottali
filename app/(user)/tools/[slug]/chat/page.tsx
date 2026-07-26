@@ -5,6 +5,7 @@ import { db } from "@/lib/db/client";
 import { conversations, toolBehavior, toolBranding, toolCapabilities, tools } from "@/db/schema";
 import { requireCurrentUser } from "@/lib/auth/current-user";
 import { canUserAccessTool } from "@/lib/tools/access";
+import { isVoiceEnabled } from "@/lib/ai/registry";
 import { ChatPageClient } from "@/components/chat/ChatPageClient";
 
 // Per-tool PWA installability (§18): when the published version has the "pwa" capability
@@ -50,6 +51,11 @@ export default async function ToolChatPage({ params }: { params: Promise<{ slug:
     .where(and(eq(conversations.userId, user.id), eq(conversations.toolId, tool.id), eq(conversations.status, "ACTIVE")))
     .orderBy(desc(conversations.lastMessageAt));
 
+  // Voice is only ever offered when BOTH the platform has a real provider configured
+  // (isVoiceEnabled) AND this specific tool's version enabled it (§16: "no muestres voces
+  // si el proveedor no está configurado").
+  const voiceReady = isVoiceEnabled();
+
   return (
     <ChatPageClient
       tool={{
@@ -63,6 +69,8 @@ export default async function ToolChatPage({ params }: { params: Promise<{ slug:
           files: Boolean(capabilities[0]?.files),
           exportEnabled: Boolean(capabilities[0]?.exportEnabled),
           feedback: Boolean(capabilities[0]?.feedback),
+          voiceInput: voiceReady && Boolean(capabilities[0]?.voiceInput),
+          voiceOutput: voiceReady && Boolean(capabilities[0]?.voiceOutput),
         },
       }}
       initialConversations={existingConversations.map((c) => ({ id: c.id, title: c.title }))}

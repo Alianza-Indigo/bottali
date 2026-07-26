@@ -55,15 +55,15 @@ export async function syncProvidersFromEnv(db: Database): Promise<void> {
     {
       kind: "stt",
       key: env.STT_PROVIDER,
-      name: "Reconocimiento de voz",
-      enabled: env.STT_PROVIDER === "openai-compatible" && Boolean(env.STT_API_KEY),
+      name: env.STT_PROVIDER === "fake" ? "Reconocimiento de voz (pruebas)" : "Reconocimiento de voz",
+      enabled: env.STT_PROVIDER === "fake" || (env.STT_PROVIDER === "openai-compatible" && Boolean(env.STT_API_KEY)),
       models: [],
     },
     {
       kind: "tts",
       key: env.TTS_PROVIDER,
-      name: "Síntesis de voz",
-      enabled: env.TTS_PROVIDER === "openai-compatible" && Boolean(env.TTS_API_KEY),
+      name: env.TTS_PROVIDER === "fake" ? "Síntesis de voz (pruebas)" : "Síntesis de voz",
+      enabled: env.TTS_PROVIDER === "fake" || (env.TTS_PROVIDER === "openai-compatible" && Boolean(env.TTS_API_KEY)),
       models: [],
     },
   ];

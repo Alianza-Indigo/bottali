@@ -12,11 +12,21 @@ const SIGNATURES: Array<{ mimeType: string; magic: number[]; offset?: number }> 
   { mimeType: "image/png", magic: [0x89, 0x50, 0x4e, 0x47] },
   { mimeType: "image/jpeg", magic: [0xff, 0xd8, 0xff] },
   { mimeType: "application/zip", magic: [0x50, 0x4b, 0x03, 0x04] }, // also matches .docx (zip container)
+  { mimeType: "audio/webm", magic: [0x1a, 0x45, 0xdf, 0xa3] }, // EBML container (WebM/MediaRecorder default)
+  { mimeType: "audio/ogg", magic: [0x4f, 0x67, 0x67, 0x53] }, // "OggS"
+  { mimeType: "audio/mpeg", magic: [0x49, 0x44, 0x33] }, // "ID3" tag (tagged MP3)
 ];
 
 function matchesSignature(buffer: Buffer, magic: number[], offset = 0): boolean {
   if (buffer.length < offset + magic.length) return false;
   return magic.every((byte, index) => buffer[offset + index] === byte);
+}
+
+const RIFF = [0x52, 0x49, 0x46, 0x46]; // "RIFF"
+const WAVE = [0x57, 0x41, 0x56, 0x45]; // "WAVE"
+
+function isWav(buffer: Buffer): boolean {
+  return matchesSignature(buffer, RIFF, 0) && matchesSignature(buffer, WAVE, 8);
 }
 
 function looksLikePlainText(buffer: Buffer): boolean {
@@ -34,6 +44,7 @@ const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingm
 /** Sniffs the real file type from content bytes. Returns null if the content doesn't match
  * any allowed signature at all (caller should reject). */
 export function sniffMimeType(buffer: Buffer, declaredMimeType: string, originalName: string): string | null {
+  if (isWav(buffer)) return "audio/wav";
   for (const sig of SIGNATURES) {
     if (matchesSignature(buffer, sig.magic, sig.offset)) {
       if (sig.mimeType === "application/zip" && originalName.toLowerCase().endsWith(".docx")) {
@@ -53,3 +64,5 @@ export function sniffMimeType(buffer: Buffer, declaredMimeType: string, original
 
 export const ALLOWED_KNOWLEDGE_MIME_TYPES = ["application/pdf", DOCX_MIME, "text/plain", "text/markdown", "text/html"];
 export const ALLOWED_UPLOAD_MIME_TYPES = [...ALLOWED_KNOWLEDGE_MIME_TYPES, "image/png", "image/jpeg"];
+export const ALLOWED_AUDIO_MIME_TYPES = ["audio/webm", "audio/ogg", "audio/mpeg", "audio/wav"];
+export const MAX_AUDIO_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB — a few minutes of compressed speech audio

@@ -33,4 +33,29 @@ describe("sniffMimeType", () => {
     const buffer = Buffer.from("MZ\x90\x00\x03\x00\x00\x00binary-exe-content");
     expect(sniffMimeType(buffer, "application/pdf", "document.pdf")).toBeNull();
   });
+
+  it("detects WebM audio (MediaRecorder default) from its EBML magic bytes", () => {
+    const buffer = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.from("rest of webm")]);
+    expect(sniffMimeType(buffer, "application/octet-stream", "recording.webm")).toBe("audio/webm");
+  });
+
+  it("detects Ogg audio from its OggS magic bytes", () => {
+    const buffer = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53]), Buffer.from("rest of ogg")]);
+    expect(sniffMimeType(buffer, "application/octet-stream", "recording.ogg")).toBe("audio/ogg");
+  });
+
+  it("detects WAV audio from its RIFF/WAVE magic bytes", () => {
+    const buffer = Buffer.concat([
+      Buffer.from([0x52, 0x49, 0x46, 0x46]),
+      Buffer.from([0, 0, 0, 0]),
+      Buffer.from([0x57, 0x41, 0x56, 0x45]),
+      Buffer.from("fmt rest"),
+    ]);
+    expect(sniffMimeType(buffer, "application/octet-stream", "recording.wav")).toBe("audio/wav");
+  });
+
+  it("detects tagged MP3 audio from its ID3 magic bytes", () => {
+    const buffer = Buffer.concat([Buffer.from([0x49, 0x44, 0x33]), Buffer.from("rest of mp3")]);
+    expect(sniffMimeType(buffer, "application/octet-stream", "recording.mp3")).toBe("audio/mpeg");
+  });
 });
