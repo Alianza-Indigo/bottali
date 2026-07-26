@@ -36,11 +36,9 @@ export default function RegisterPage() {
     return (
       <Card>
         <CardBody>
-          <Alert tone="success">
-            Si el correo es válido, recibirás instrucciones para verificar tu cuenta. Revisa tu bandeja de entrada.
-          </Alert>
+          <Alert tone="success">Tu cuenta fue creada. Ya puedes iniciar sesión.</Alert>
           <Link href="/login" className="mt-4 inline-block text-sm underline">
-            Volver a iniciar sesión
+            Iniciar sesión
           </Link>
         </CardBody>
       </Card>

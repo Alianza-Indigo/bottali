@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { DEMO_CREDENTIALS, loginAs } from "./helpers";
 
 test.describe("Autenticación", () => {
-  test("el registro válido muestra la confirmación de verificación", async ({ page }) => {
+  test("el registro válido crea la cuenta y permite iniciar sesión de inmediato", async ({ page }) => {
     await page.goto("/register");
     const unique = `e2e-${Date.now()}@example.com`;
     await page.getByLabel("Nombre").fill("Persona de prueba");
@@ -10,7 +10,13 @@ test.describe("Autenticación", () => {
     await page.getByLabel("Contraseña").fill("ClaveSegura123");
     await page.getByLabel(/Acepto el aviso de privacidad/i).check();
     await page.getByRole("button", { name: "Crear cuenta" }).click();
-    await expect(page.getByText(/recibirás instrucciones para verificar tu cuenta/i)).toBeVisible();
+    await expect(page.getByText(/tu cuenta fue creada/i)).toBeVisible();
+
+    await page.getByRole("link", { name: "Iniciar sesión" }).click();
+    await page.getByLabel("Correo electrónico").fill(unique);
+    await page.getByLabel("Contraseña").fill("ClaveSegura123");
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
+    await expect(page).toHaveURL(/\/dashboard/);
   });
 
   test("login con credenciales inválidas muestra un error genérico", async ({ page }) => {

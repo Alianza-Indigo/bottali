@@ -1,16 +1,13 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { emailVerificationTokens, userProfiles, userRoles, users } from "@/db/schema";
+import { userProfiles, userRoles, users } from "@/db/schema";
 import { registerSchema } from "@/lib/validation/auth";
 import { parseJsonBody, handleApiError } from "@/lib/validation/http";
 import { hashPassword, evaluatePasswordStrength } from "@/lib/auth/password";
-import { generateOpaqueToken, hashToken } from "@/lib/auth/tokens";
-import { getEnv } from "@/lib/env";
 import { getRateLimiter } from "@/lib/security/rate-limit";
 import { getRequestMetadata } from "@/lib/auth/session";
 import { recordAuditEvent } from "@/lib/audit/log";
-import { getEmailProvider } from "@/lib/notifications/email";
 import { getRoleIdsByKeys } from "@/lib/permissions/rbac";
 import { ValidationError, RateLimitError } from "@/lib/utils/errors";
 
@@ -43,12 +40,16 @@ export async function POST(request: Request) {
     }
 
     const passwordHash = await hashPassword(body.password);
-    const env = getEnv();
 
+    // TEMPORAL: verificación de correo desactivada a petición explícita — las cuentas se
+    // crean directamente ACTIVE en vez de PENDING_VERIFICATION, sin token ni correo de
+    // verificación. Para reactivarla: volver a status: "PENDING_VERIFICATION" (sin
+    // emailVerifiedAt) y restaurar el bloque que crea el emailVerificationTokens y envía el
+    // correo (ver git history de este archivo), y ajustar el mensaje de éxito de vuelta.
     const userId = await db.transaction(async (tx) => {
       const [user] = await tx
         .insert(users)
-        .values({ email: normalizedEmail, passwordHash, status: "PENDING_VERIFICATION" })
+        .values({ email: normalizedEmail, passwordHash, status: "ACTIVE", emailVerifiedAt: new Date() })
         .returning({ id: users.id });
       if (!user) throw new Error("No fue posible crear el usuario.");
 
@@ -63,21 +64,6 @@ export async function POST(request: Request) {
       return user.id;
     });
 
-    const token = generateOpaqueToken();
-    await db.insert(emailVerificationTokens).values({
-      userId,
-      tokenHash: hashToken(token),
-      email: normalizedEmail,
-      expiresAt: new Date(Date.now() + env.EMAIL_VERIFICATION_TTL_SECONDS * 1000),
-    });
-
-    const verifyUrl = `${env.NEXT_PUBLIC_APP_URL}/verify-email?token=${token}`;
-    await getEmailProvider().send({
-      to: normalizedEmail,
-      subject: "Verifica tu cuenta",
-      text: `Confirma tu correo visitando: ${verifyUrl}\n\nEste enlace expira en ${Math.round(env.EMAIL_VERIFICATION_TTL_SECONDS / 3600)} horas.`,
-    });
-
     await recordAuditEvent({
       actorId: userId,
       action: "auth.register",
@@ -85,10 +71,7 @@ export async function POST(request: Request) {
       resourceId: userId,
     });
 
-    return NextResponse.json(
-      { message: "Si el correo es válido, recibirás instrucciones para verificar tu cuenta." },
-      { status: 201 },
-    );
+    return NextResponse.json({ message: "Cuenta creada. Ya puedes iniciar sesión." }, { status: 201 });
   } catch (error) {
     return handleApiError(error);
   }
