@@ -107,9 +107,13 @@ producción; ajustar según necesidad de negocio.
    ```
    Falla con una lista explícita de lo que falta si `APP_ENV=production` y
    algo obligatorio no está configurado.
-7. **Desplegar** (`vercel --prod` o vía integración Git). `vercel.json` ya
-   declara los 5 cron jobs (`/api/v1/cron/jobs`, `publications`, `cleanup`,
-   `retention`, `provider-health`) con sus horarios.
+7. **Desplegar** (`vercel --prod` o vía integración Git). `vercel.json`
+   declara un único cron consolidado (`/api/v1/cron/daily`, una vez al día)
+   que ejecuta en secuencia el procesamiento de trabajos en cola, las
+   publicaciones programadas, la limpieza de archivos/confirmaciones
+   expiradas, la retención y el chequeo de salud de proveedores — el plan
+   Hobby de Vercel limita los crons a frecuencia diaria; con un plan de pago
+   puede volver a dividirse en crons más frecuentes si la carga lo justifica.
 8. **Generar los íconos de PWA** si no están versionados o si cambia la
    marca (`npm run pwa:icons`); son estáticos y se sirven desde `public/`.
 

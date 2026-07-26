@@ -28,7 +28,8 @@ export class SyncJobProvider implements JobProvider {
 
 /**
  * Persists the job as QUEUED in Postgres and returns immediately — a Vercel Cron job
- * (§6, /api/v1/cron/jobs) polls and drains the queue in small batches on its own schedule.
+ * (§6, /api/v1/cron/daily) polls and drains the queue once a day (Hobby plan: crons are
+ * capped at daily frequency; a paid plan would let this run every few minutes instead).
  * This is a real, working serverless-compatible queue built entirely on Postgres + Cron,
  * with no external queue service to provision. Swapping in a managed queue (Vercel Queue,
  * QStash, Upstash Workflow) later is a drop-in replacement behind this same interface —
