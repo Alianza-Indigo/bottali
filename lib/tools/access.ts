@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { accessRequests, groupMembers, toolAccessRules, toolActivations, toolAssignments, tools, userRoles } from "@/db/schema";
 import { getVersionById } from "./repository";
@@ -114,6 +114,110 @@ export async function resolveCatalogState({ toolId, userId }: ResolveArgs): Prom
     default:
       return "APPROVAL_REQUIRED";
   }
+}
+
+/**
+ * Batched sibling of resolveCatalogState (§46 "evita consultas N+1"): the catalog page/API
+ * needs this decision for every published tool at once, and calling resolveCatalogState in a
+ * loop means ~7 queries PER tool. This does the same handful of lookups but scoped to the
+ * whole toolIds list at once, then replays the identical branch-by-branch decision logic
+ * per tool from in-memory maps — no per-tool DB round trip. Kept as a separate function
+ * (rather than refactoring resolveCatalogState to share code) specifically so the
+ * well-tested single-tool path is never touched; tests/integration/tools-lifecycle.test.ts
+ * asserts the two agree tool-by-tool.
+ */
+export async function resolveCatalogStates(toolIds: string[], userId: string): Promise<Map<string, CatalogState>> {
+  const result = new Map<string, CatalogState>();
+  if (toolIds.length === 0) return result;
+
+  const [toolRows, userGroups, userRoleRows, deniedAssignments, allowedAssignments, activations, requests] = await Promise.all([
+    db.select().from(tools).where(inArray(tools.id, toolIds)),
+    db.select({ groupId: groupMembers.groupId }).from(groupMembers).where(eq(groupMembers.userId, userId)),
+    db.select({ roleId: userRoles.roleId }).from(userRoles).where(eq(userRoles.userId, userId)),
+    db.select().from(toolAssignments).where(and(inArray(toolAssignments.toolId, toolIds), eq(toolAssignments.decision, "DENY"))),
+    db.select().from(toolAssignments).where(and(inArray(toolAssignments.toolId, toolIds), eq(toolAssignments.decision, "ALLOW"))),
+    db
+      .select({ toolId: toolActivations.toolId })
+      .from(toolActivations)
+      .where(and(inArray(toolActivations.toolId, toolIds), eq(toolActivations.userId, userId), isNull(toolActivations.deactivatedAt))),
+    db.select().from(accessRequests).where(and(inArray(accessRequests.toolId, toolIds), eq(accessRequests.userId, userId))),
+  ]);
+
+  const groupIds = new Set(userGroups.map((g) => g.groupId));
+  const roleIds = new Set(userRoleRows.map((r) => r.roleId));
+  const activatedToolIds = new Set(activations.map((a) => a.toolId));
+  const requestByTool = new Map(requests.map((r) => [r.toolId, r]));
+
+  const matchesUser = (a: (typeof deniedAssignments)[number]) =>
+    (a.subjectType === "USER" && a.userId === userId) ||
+    (a.subjectType === "GROUP" && !!a.groupId && groupIds.has(a.groupId)) ||
+    (a.subjectType === "ROLE" && !!a.roleId && roleIds.has(a.roleId));
+  const deniedToolIds = new Set(deniedAssignments.filter(matchesUser).map((a) => a.toolId));
+  const allowedToolIds = new Set(allowedAssignments.filter(matchesUser).map((a) => a.toolId));
+
+  const publishedVersionIds = toolRows.map((t) => t.publishedVersionId).filter((id): id is string => Boolean(id));
+  const accessRuleRows =
+    publishedVersionIds.length > 0
+      ? await db.select().from(toolAccessRules).where(inArray(toolAccessRules.toolVersionId, publishedVersionIds))
+      : [];
+  const accessRuleByVersion = new Map(accessRuleRows.map((r) => [r.toolVersionId, r]));
+
+  for (const row of toolRows) {
+    if (row.status === "PAUSED") {
+      result.set(row.id, "PAUSED");
+      continue;
+    }
+    if (row.status === "SUSPENDED") {
+      result.set(row.id, "SUSPENDED");
+      continue;
+    }
+    if (row.status !== "PUBLISHED") {
+      result.set(row.id, "COMING_SOON");
+      continue;
+    }
+    if (deniedToolIds.has(row.id)) {
+      result.set(row.id, "SUSPENDED");
+      continue;
+    }
+
+    const accessRule = row.publishedVersionId ? accessRuleByVersion.get(row.publishedVersionId) : undefined;
+    if (accessRule?.startsAt && accessRule.startsAt.getTime() > Date.now()) {
+      result.set(row.id, "COMING_SOON");
+      continue;
+    }
+    if (accessRule?.endsAt && accessRule.endsAt.getTime() < Date.now()) {
+      result.set(row.id, "EXPIRED");
+      continue;
+    }
+
+    const activated = activatedToolIds.has(row.id);
+    if (allowedToolIds.has(row.id)) {
+      result.set(row.id, activated ? "ACTIVE" : "AVAILABLE");
+      continue;
+    }
+
+    const existingRequest = requestByTool.get(row.id);
+    switch (accessRule?.mode ?? "ALL_USERS") {
+      case "ALL_USERS":
+        result.set(row.id, activated ? "ACTIVE" : "AVAILABLE");
+        break;
+      case "INVITATION":
+        result.set(row.id, existingRequest?.status !== "APPROVED" ? "INVITATION_ONLY" : activated ? "ACTIVE" : "AVAILABLE");
+        break;
+      case "REQUEST_APPROVAL":
+      case "SELECTED_USERS":
+      case "GROUPS":
+      case "ROLES":
+        if (existingRequest?.status === "APPROVED") result.set(row.id, activated ? "ACTIVE" : "AVAILABLE");
+        else if (existingRequest?.status === "PENDING") result.set(row.id, "ACCESS_REQUESTED");
+        else result.set(row.id, "APPROVAL_REQUIRED");
+        break;
+      default:
+        result.set(row.id, "APPROVAL_REQUIRED");
+    }
+  }
+
+  return result;
 }
 
 /** True once the tool is both authorized for this user AND explicitly activated by them —

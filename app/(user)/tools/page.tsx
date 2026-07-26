@@ -1,8 +1,5 @@
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db/client";
-import { toolBranding, toolCapabilities, tools } from "@/db/schema";
 import { requireCurrentUser } from "@/lib/auth/current-user";
-import { resolveCatalogState } from "@/lib/tools/access";
+import { getCatalogItems } from "@/lib/tools/catalog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CatalogCard } from "@/components/catalog/CatalogCard";
 
@@ -10,31 +7,20 @@ export const metadata = { title: "Catálogo" };
 
 export default async function CatalogPage() {
   const user = await requireCurrentUser();
-  const publishedTools = await db.select().from(tools).where(eq(tools.status, "PUBLISHED"));
+  const catalogItems = await getCatalogItems(user.id);
 
-  const items = (
-    await Promise.all(
-      publishedTools.map(async (tool) => {
-        if (!tool.publishedVersionId) return null;
-        const [branding] = await db.select().from(toolBranding).where(eq(toolBranding.toolVersionId, tool.publishedVersionId)).limit(1);
-        const [capabilities] = await db.select().from(toolCapabilities).where(eq(toolCapabilities.toolVersionId, tool.publishedVersionId)).limit(1);
-        if (!branding) return null;
-        const state = await resolveCatalogState({ toolId: tool.id, userId: user.id });
-        return {
-          id: tool.id,
-          slug: tool.slug,
-          category: tool.category,
-          name: branding.name,
-          description: branding.description,
-          iconUrl: branding.iconUrl,
-          primaryColor: branding.primaryColor,
-          hasVoice: Boolean(capabilities?.voiceInput || capabilities?.voiceOutput),
-          hasFiles: Boolean(capabilities?.files),
-          state,
-        };
-      }),
-    )
-  ).filter((item): item is NonNullable<typeof item> => item !== null);
+  const items = catalogItems.map((item) => ({
+    id: item.id,
+    slug: item.slug,
+    category: item.category,
+    name: item.name,
+    description: item.description,
+    iconUrl: item.iconUrl,
+    primaryColor: item.primaryColor,
+    hasVoice: Boolean(item.capabilities?.voiceInput || item.capabilities?.voiceOutput),
+    hasFiles: Boolean(item.capabilities?.files),
+    state: item.state,
+  }));
 
   return (
     <div className="flex flex-col gap-6">

@@ -24,10 +24,11 @@ import {
   updateSafetyPolicies,
 } from "@/lib/tools/service";
 import { validateVersionForPublish } from "@/lib/tools/validation-publish";
-import { activateToolForUser, resolveCatalogState } from "@/lib/tools/access";
+import { activateToolForUser, resolveCatalogState, resolveCatalogStates } from "@/lib/tools/access";
 import { runToolTest } from "@/lib/tools/test-run";
 import { syncProvidersFromEnv } from "@/lib/ai/sync-providers";
 import { seedDefaultLegalDocuments } from "@/lib/legal/seed-legal";
+import { createPublishedTestTool } from "../fixtures/tool-factory";
 
 describe("tools engine lifecycle (real Postgres, fake LLM provider)", () => {
   let actorId: string;
@@ -237,6 +238,19 @@ describe("tools engine lifecycle (real Postgres, fake LLM provider)", () => {
     await activateToolForUser(toolId, actorId);
     const stateAfter = await resolveCatalogState({ toolId, userId: actorId });
     expect(stateAfter).toBe("ACTIVE");
+  });
+
+  it("resolveCatalogStates (batched, used by the catalog page/API to avoid N+1) agrees with resolveCatalogState per tool", async () => {
+    const other = await createPublishedTestTool(actorId);
+
+    const [individualForToolId, individualForOther] = await Promise.all([
+      resolveCatalogState({ toolId, userId: actorId }),
+      resolveCatalogState({ toolId: other.toolId, userId: actorId }),
+    ]);
+    const batched = await resolveCatalogStates([toolId, other.toolId], actorId);
+
+    expect(batched.get(toolId)).toBe(individualForToolId);
+    expect(batched.get(other.toolId)).toBe(individualForOther);
   });
 
   it("runs a test message against the fake provider", async () => {

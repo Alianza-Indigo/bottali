@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { desc, eq } from "drizzle-orm";
+import { desc, inArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { toolBranding, tools } from "@/db/schema";
 import { Card } from "@/components/ui/Card";
@@ -25,15 +25,18 @@ const STATUS_TONE: Record<string, BadgeTone> = {
 export default async function AdminToolsPage() {
   const rows = await db.select().from(tools).orderBy(desc(tools.createdAt));
 
-  const withNames = await Promise.all(
-    rows.map(async (tool) => {
-      const versionId = tool.draftVersionId ?? tool.publishedVersionId;
-      const branding = versionId
-        ? (await db.select({ name: toolBranding.name }).from(toolBranding).where(eq(toolBranding.toolVersionId, versionId)).limit(1))[0]
-        : null;
-      return { ...tool, name: branding?.name ?? tool.slug };
-    }),
-  );
+  // Single batched branding query instead of one per tool (§46 "evita consultas N+1").
+  const versionIds = rows.map((t) => t.draftVersionId ?? t.publishedVersionId).filter((id): id is string => Boolean(id));
+  const brandingRows =
+    versionIds.length > 0
+      ? await db.select({ toolVersionId: toolBranding.toolVersionId, name: toolBranding.name }).from(toolBranding).where(inArray(toolBranding.toolVersionId, versionIds))
+      : [];
+  const nameByVersion = new Map(brandingRows.map((b) => [b.toolVersionId, b.name]));
+
+  const withNames = rows.map((tool) => {
+    const versionId = tool.draftVersionId ?? tool.publishedVersionId;
+    return { ...tool, name: (versionId && nameByVersion.get(versionId)) ?? tool.slug };
+  });
 
   return (
     <div className="flex flex-col gap-4">
