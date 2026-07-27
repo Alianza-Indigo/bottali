@@ -17,6 +17,7 @@ falsa/local. En producción, todas deben apuntar a un servicio real:
 | Archivos | Vercel Blob | `BLOB_READ_WRITE_TOKEN` |
 | Rate limiting | Upstash Redis (REST) | `REDIS_URL`, `REDIS_TOKEN` |
 | Trabajos asíncronos | Vercel Cron (ya incluido en `vercel.json`) | `JOB_PROVIDER=vercel-queue`, `CRON_SECRET` |
+| Identidad | Google OpenID Connect | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
 | LLM / embeddings / moderación / voz | Cualquier endpoint compatible con OpenAI | `LLM_API_KEY`, `EMBEDDING_API_KEY`, etc. |
 | Email | SMTP real (Postmark, Resend, SES, etc.) | `EMAIL_PROVIDER=smtp`, `SMTP_*` |
 
@@ -45,6 +46,22 @@ Copia `.env.example` como referencia. Las variables marcadas como
 
 - `BLOB_READ_WRITE_TOKEN` — token de Vercel Blob.
 - `REDIS_URL` / `REDIS_TOKEN` — credenciales REST de Upstash Redis.
+
+### Acceso con Google (obligatorio en producción)
+
+- Crear en Google Cloud Console un cliente OAuth 2.0 de tipo **Web
+  application**.
+- Registrar como URI de redirección autorizada
+  `https://TU_DOMINIO/api/v1/auth/google/callback`. Debe coincidir con
+  `${NEXT_PUBLIC_APP_URL}/api/v1/auth/google/callback`.
+- Configurar `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` en Vercel.
+- `GOOGLE_ALLOWED_DOMAIN` es opcional; al definirlo, solo se aceptan cuentas
+  del dominio de Google Workspace indicado.
+- El primer acceso de `mossomex@gmail.com` vincula la identidad verificada de
+  Google con el `SUPER_ADMIN` creado por el seed, conservando ese rol.
+
+No se almacenan tokens de acceso o refresh de Google: el callback verifica el
+ID token y emite una sesión propia de Bottali.
 
 ### Trabajos asíncronos
 

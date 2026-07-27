@@ -71,6 +71,13 @@
       "when": 1785133576479,
       "tag": "0009_happy_winter_soldier",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785164648297,
+      "tag": "0010_omniscient_madripoor",
+      "breakpoints": true
     }
   ]
 }

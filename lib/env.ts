@@ -28,6 +28,9 @@ const envSchema = z.object({
 
   AUTH_COOKIE_NAME: z.string().default("crisis_session"),
   SESSION_TTL_SECONDS: numberFromString(2592000),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_ALLOWED_DOMAIN: z.string().optional(),
   EMAIL_VERIFICATION_TTL_SECONDS: numberFromString(86400),
   PASSWORD_RESET_TTL_SECONDS: numberFromString(3600),
 

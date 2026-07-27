@@ -30,8 +30,8 @@ obligatorias en CI:
   └─────────────┘  └──────────────────┘  └───────────────┘
 ```
 
-En total, al momento de actualizar esta guía la suite tiene **132 pruebas**:
-22 unitarias, 57 de integración, 16 e2e, 22 de seguridad, 5 de accesibilidad y
+En total, al momento de actualizar esta guía la suite tiene **141 pruebas**:
+29 unitarias, 57 de integración, 18 e2e, 22 de seguridad, 5 de accesibilidad y
 10 de rendimiento.
 
 La regla general: unitarias no tocan la base de datos ni la red; integración
@@ -79,6 +79,7 @@ Qué cubre (`tests/unit/`):
 | `chat-drafts.test.ts` | Persistencia de borradores de chat (§22/§36) cuando IndexedDB no está disponible: `loadDraft`/`saveDraft`/`clearDraft` resuelven en vez de rechazar. |
 | `chunking.test.ts` | `chunkText`: un solo fragmento para texto corto, ningún fragmento para texto vacío, división respetando `maxChars`, solapamiento entre fragmentos consecutivos. |
 | `mime-sniff.test.ts` | `sniffMimeType`: detección por *magic bytes* de PDF, PNG, docx (contenedor zip), WebM/Ogg/WAV/MP3 (para las grabaciones de voz), y rechazo de contenido cuyo tipo declarado no coincide con sus bytes reales (incluye un ejecutable disfrazado de PDF). |
+| `return-path.test.ts` | `sanitizeReturnPath`: conserva rutas internas con query/fragment y descarta URLs absolutas, protocol-relative y valores inválidos para evitar redirecciones abiertas después de OAuth. |
 | `tool-result-wrapping.test.ts` | `wrapToolResultForModel`: el resultado corto se envuelve sin cambios con el framing "esto son datos, no instrucciones"; un resultado que excede el límite se trunca para que una sola llamada a herramienta no agote la ventana de contexto. |
 
 Cómo correrlas:
@@ -234,43 +235,26 @@ existencia antes de insertar, y crear la herramienta usa un slug generado con
 ### El patrón `loginAs` y MFA
 
 `tests/e2e/helpers.ts` expone `loginAs(page, email, password)`, usado por
-casi todos los specs. Las cuentas demo de administrador
+casi todos los specs. El helper prepara la sesión mediante el endpoint
+heredado de contraseña, que ya no aparece en la interfaz pública. Las cuentas demo de administrador
 (`superAdmin`, `toolAdmin`) tienen MFA pre-habilitado en el seed
 (`DEMO_MFA_SECRET` en `db/seed/demo.ts`), así que iniciar sesión con ellas
 siempre muestra el segundo factor; la cuenta `user` no tiene MFA.
 
-`loginAs` no sabe de antemano si la cuenta que recibe tiene MFA o no, así que
-en vez de comprobar con algo como `mfaInput.isVisible({ timeout })`
-—que forzaría a esperar el timeout completo en cada login sin MFA, ya que
-`isVisible` con `timeout` en Playwright espera a que el elemento aparezca o
-al timeout, no puede "adivinar" que nunca va a aparecer— usa una carrera real
-entre dos resultados posibles:
-
-```ts
-const outcome = await Promise.race([
-  page.waitForURL(/\/dashboard/).then(() => "dashboard" as const),
-  mfaInput.waitFor({ state: "visible" }).then(() => "mfa" as const),
-]);
-```
-
-Una cuenta sin MFA llega a `/dashboard` casi de inmediato y gana la carrera;
-una cuenta con MFA nunca navega a `/dashboard` sin antes pasar por el
-segundo factor, así que en su caso gana la espera por el input de MFA. Si
-`outcome === "mfa"`, calcula un código TOTP real y vigente a partir del
+`loginAs` lee `mfaRequired` de la respuesta del endpoint. Una cuenta sin MFA
+navega directamente a `/dashboard`; para una cuenta con MFA abre
+`/login/mfa`, calcula un código TOTP real y vigente a partir del
 secreto conocido de la cuenta (`generateTotpCode`, el mismo primitivo que usa
 una app autenticadora de verdad) en vez de necesitar un atajo especial solo
 para pruebas, lo rellena, confirma, y espera la navegación final a
-`/dashboard`. El resultado: la mayoría de los logins (cuentas sin MFA) no
-pagan ningún costo de espera adicional, y los que sí tienen MFA se resuelven
-tan pronto el input aparece, sin un `sleep` fijo "por si acaso" que ralentice
-toda la suite.
+`/dashboard`.
 
 ### Qué flujos cubre `tests/e2e/`
 
 | Archivo | Qué cubre |
 |---|---|
 | `admin.spec.ts` | Un super admin entra al panel y ve la navegación administrativa; puede crear una herramienta desde el asistente; puede crear un usuario que recibe un correo para definir su contraseña; un usuario final es redirigido fuera del panel administrativo. |
-| `auth.spec.ts` | Registro válido crea una cuenta activa y permite iniciar sesión; login con credenciales inválidas muestra un error genérico; login con credenciales demo lleva al dashboard autenticado. |
+| `auth.spec.ts` | `/register` redirige al acceso con Google; `next` conserva destinos internos y descarta externos; el endpoint heredado devuelve errores genéricos; el helper de sesión demo llega al dashboard. |
 | `catalog-chat.spec.ts` | Un usuario activa una herramienta publicada del catálogo y conversa con ella. |
 | `form-input.spec.ts` | Un usuario completa un formulario solicitado por el asistente (`collect_form_input`) y la respuesta lo refleja. |
 | `pwa.spec.ts` | Los assets del shell PWA (manifest, íconos, página offline) responden; el manifest de la plataforma referencia los tres íconos requeridos; el service worker se registra y queda activo en el navegador; una herramienta publicada con PWA habilitada expone su propio manifest dinámico. |

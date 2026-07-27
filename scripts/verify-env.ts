@@ -38,6 +38,11 @@ function main() {
   if (!env.CRON_SECRET) {
     problems.push("CRON_SECRET no configurado: los endpoints /api/v1/cron/* no podrán autenticar las llamadas de Vercel Cron.");
   }
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    problems.push(
+      "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET no configurados: el acceso con Google no funcionará.",
+    );
+  }
   if (env.LLM_PROVIDER === "fake") {
     problems.push('LLM_PROVIDER=fake: el proveedor determinista de pruebas está activo; configura "openai-compatible" con LLM_API_KEY para producción real.');
   }

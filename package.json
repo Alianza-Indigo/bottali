@@ -45,6 +45,7 @@
     "@vercel/blob": "^2.6.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
+    "google-auth-library": "^10.9.1",
     "mammoth": "^1.8.0",
     "nanoid": "^5.0.9",
     "next": "15.5.21",

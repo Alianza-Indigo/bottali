@@ -16,11 +16,6 @@ export default function HomePage() {
           <Link href="/login">
             <Button className="w-full">Iniciar sesión</Button>
           </Link>
-          <Link href="/register">
-            <Button variant="secondary" className="w-full">
-              Crear cuenta
-            </Button>
-          </Link>
         </div>
       </CardBody>
     </Card>

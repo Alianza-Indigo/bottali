@@ -13,8 +13,8 @@ partir de ese esquema viven en `db/migrations/`. El flujo de trabajo es:
    `DATABASE_URL`. Es el mismo comando que corre `vercel-build` en cada
    despliegue (ver `docs/deployment-vercel.md`).
 
-Al momento de escribir este documento hay **9 migraciones** aplicadas
-(`0000_init.sql` hasta `0008_stormy_prism.sql`), todas coherentes con el
+Al momento de escribir este documento hay **11 migraciones** aplicadas
+(`0000_init.sql` hasta `0010_omniscient_madripoor.sql`), todas coherentes con el
 esquema TypeScript actual (ver nota de verificación al final del
 documento).
 
@@ -34,7 +34,8 @@ Definidas en `db/schema/auth.ts`.
 
 | Tabla | Descripción | Columnas clave | Relaciones |
 |---|---|---|---|
-| `users` | Cuenta de usuario de la plataforma. | `email` (varchar 320, índice único `users_email_unique_idx` sobre `lower(email)`), `password_hash`, `status` (`user_status`, default `PENDING_VERIFICATION`; el registro público crea cuentas `ACTIVE`), `is_demo` boolean, `failed_login_attempts` int default 0, `locked_until`, `last_login_at`, `deleted_at` (soft delete) | Raíz de casi todas las FKs del sistema |
+| `users` | Cuenta local de la plataforma, creada o vinculada desde Google. | `email` (varchar 320, índice único `users_email_unique_idx` sobre `lower(email)`), `password_hash` (compatibilidad heredada), `status` (`user_status`), `is_demo` boolean, `failed_login_attempts` int default 0, `locked_until`, `last_login_at`, `deleted_at` (soft delete) | Raíz de casi todas las FKs del sistema |
+| `oauth_accounts` | Identidad externa vinculada a una cuenta local. | `provider`, `provider_account_id`, `email_at_link`; índices únicos por `(provider, provider_account_id)` y `(user_id, provider)` | `users` (cascade) |
 | `user_profiles` | Perfil/preferencias de UI de un usuario (1:1). | `user_id` (PK, FK a `users.id` ON DELETE CASCADE), `display_name`, `avatar_url`, `locale` default `"es"`, `timezone` default `"UTC"`, `accessibility_preferences` jsonb tipado (`theme`, `reducedMotion`, `highContrast`, `lowStimulus`, `textScale`), `ui_state` jsonb libre (`Record<string, unknown>`) | `users` (1:1, PK compartida) |
 | `sessions` | Sesión de navegador/API autenticada. | `token_hash`, `status` (`session_status`: `ACTIVE`/`REVOKED`/`EXPIRED`), `user_agent`, `ip_truncated`, `expires_at` (notNull), `revoked_at`, **`mfa_verified_at`** (nullable) | `users` (cascade) |
 | `email_verification_tokens` | Token de verificación de correo. | `token_hash`, `email`, `expires_at` (notNull), `consumed_at` | `users` (cascade) |

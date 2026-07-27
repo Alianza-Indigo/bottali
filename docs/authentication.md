@@ -1,11 +1,48 @@
 # Autenticación
 
 Esta guía documenta cómo funciona realmente la autenticación en la plataforma:
-modelo de sesión, registro, inicio de sesión, MFA (TOTP), el requisito
+Google OpenID Connect, modelo de sesión, compatibilidad heredada con contraseña,
+MFA (TOTP), el requisito
 obligatorio de MFA para administradores (§28), recuperación de contraseña y
 cierre/revocación de sesiones. Todo lo descrito corresponde a la
 implementación en `lib/auth/`, `lib/permissions/admin-guard.ts`,
 `lib/security/crypto.ts` y las rutas bajo `app/api/v1/auth/`.
+
+## Acceso principal con Google
+
+La interfaz pública usa Google OpenID Connect como única entrada visible:
+
+1. `GET /api/v1/auth/google/start` crea `state`, `nonce` y un verificador
+   PKCE, los guarda temporalmente en cookies `httpOnly`, y redirige al
+   endpoint de autorización de Google.
+2. `GET /api/v1/auth/google/callback` exige que `state` coincida, intercambia
+   el código con PKCE y verifica el ID token, su audiencia, correo verificado
+   y `nonce`.
+3. La identidad estable es `(provider, provider_account_id)`, donde
+   `provider_account_id` corresponde al `sub` de Google. No se usan correo o
+   nombre como identificador permanente.
+4. En el primer acceso se crean `users`, `user_profiles`, `oauth_accounts` y
+   la asignación al rol `USER` dentro de una transacción. Si el correo
+   verificado ya pertenece a una cuenta local disponible, se vincula esa
+   cuenta y se conservan sus roles; esto permite migrar al administrador
+   inicial sin crear una puerta de acceso paralela.
+5. Bottali no persiste access tokens ni refresh tokens de Google. Después de
+   verificar la identidad crea su propia sesión opaca, por lo que RBAC,
+   revocación y auditoría continúan bajo control de la plataforma.
+
+El flujo conserva un destino `next` solo cuando es una ruta interna. Si la
+cuenta tiene TOTP habilitado, la sesión queda pendiente y el callback dirige
+a `/login/mfa` antes de permitir acceso. Las cuentas suspendidas, bloqueadas
+o eliminadas no pueden crear una sesión nueva.
+
+Configuración:
+
+- `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` son obligatorias en producción.
+- La URI de redirección es
+  `${NEXT_PUBLIC_APP_URL}/api/v1/auth/google/callback` y debe registrarse
+  exactamente así en Google Cloud Console.
+- `GOOGLE_ALLOWED_DOMAIN` es opcional y restringe el acceso a un dominio de
+  Google Workspace mediante el claim `hd`.
 
 ## Resumen del modelo de sesión
 
@@ -67,7 +104,11 @@ Funciones expuestas por `lib/auth/session.ts`:
 las rutas y Server Components protegidos: llama a `getCurrentSession()` y
 lanza `UnauthorizedError` si no hay sesión válida.
 
-## Registro y verificación de correo
+## Registro heredado y verificación de correo
+
+La ruta `/register` redirige a `/login`; no existe un formulario público de
+alta con contraseña. Los endpoints siguientes se conservan temporalmente para
+compatibilidad interna, pruebas y recuperación durante la migración.
 
 `POST /api/v1/auth/register` (`app/api/v1/auth/register/route.ts`):
 
@@ -118,7 +159,7 @@ registro como en `reset-password`. El hash se calcula con **Argon2**
 (`@node-rs/argon2`, `hash`/`verify`), con `memoryCost: 19456`, `timeCost: 2`,
 `parallelism: 1`.
 
-## Inicio de sesión
+## Inicio de sesión heredado con contraseña
 
 `POST /api/v1/auth/login` (`app/api/v1/auth/login/route.ts`):
 

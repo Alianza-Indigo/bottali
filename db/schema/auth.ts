@@ -35,6 +35,29 @@ export const users = pgTable(
   ],
 );
 
+export const oauthAccounts = pgTable(
+  "oauth_accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 32 }).notNull(),
+    providerAccountId: varchar("provider_account_id", { length: 255 }).notNull(),
+    emailAtLink: varchar("email_at_link", { length: 320 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("oauth_accounts_provider_account_idx").on(
+      table.provider,
+      table.providerAccountId,
+    ),
+    uniqueIndex("oauth_accounts_user_provider_idx").on(table.userId, table.provider),
+    index("oauth_accounts_user_idx").on(table.userId),
+  ],
+);
+
 export const userProfiles = pgTable("user_profiles", {
   userId: uuid("user_id")
     .primaryKey()
