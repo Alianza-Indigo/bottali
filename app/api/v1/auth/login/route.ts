@@ -88,8 +88,9 @@ export async function POST(request: Request) {
     // §28 MFA: password is correct, but a user with MFA enabled doesn't get a usable
     // session until they also pass POST /api/v1/auth/mfa/login-verify — the session row
     // exists (so that endpoint can find it via the cookie) but getCurrentSession() won't
-    // honor it until then.
-    const mfaEnabled = await isMfaEnabled(user.id);
+    // honor it until then. DISABLE_MFA is a temporary env-driven kill switch for this
+    // second-factor step — flip it back off to restore normal enforcement.
+    const mfaEnabled = getEnv().DISABLE_MFA ? false : await isMfaEnabled(user.id);
     await createSession(user.id, { requireMfaVerification: mfaEnabled });
 
     if (mfaEnabled) {

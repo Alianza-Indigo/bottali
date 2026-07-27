@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentSession, isMfaEnabled } from "@/lib/auth/session";
+import { getEnv } from "@/lib/env";
 import { getUserPermissions } from "./rbac";
 import type { PermissionKey } from "./definitions";
 
@@ -28,8 +29,9 @@ export async function requireAdminAccess() {
 
   // §28 "MFA para administradores": every admin-panel role must have MFA enabled — this is
   // the single choke point every /admin page/layout goes through, so there is no way to
-  // reach any admin screen without it.
-  if (!(await isMfaEnabled(session.id))) redirect("/profile/mfa-setup?required=admin");
+  // reach any admin screen without it. DISABLE_MFA is a temporary env-driven kill switch
+  // for this requirement — flip it back off to restore normal enforcement.
+  if (!getEnv().DISABLE_MFA && !(await isMfaEnabled(session.id))) redirect("/profile/mfa-setup?required=admin");
 
   return { session, permissions };
 }
