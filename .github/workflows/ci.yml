@@ -30,10 +30,6 @@ env:
   ENABLE_FILES: "true"
   ENABLE_PWA: "true"
   ENABLE_ANALYTICS: "true"
-  # Production keeps the tight default (20/15min/IP, see lib/env.ts). A full Playwright
-  # suite performs far more logins than that from the single shared runner IP within one
-  # non-resetting window, so CI alone raises the ceiling rather than weakening the real control.
-  LOGIN_RATE_LIMIT_MAX: "1000"
 
 jobs:
   lint-typecheck:
@@ -84,6 +80,13 @@ jobs:
   e2e:
     name: E2E, security & accessibility (Playwright)
     runs-on: ubuntu-latest
+    # Production keeps the tight default (20/15min/IP, see lib/env.ts). This job alone runs
+    # the full Playwright suite (~42 tests) from one shared runner IP within a single
+    # non-resetting window, exhausting that budget — raise it here only, not for every job,
+    # so tests/performance/04-load.spec.ts (which asserts the real 20/15min default actually
+    # fires) still runs against production's real threshold in the `performance` job below.
+    env:
+      LOGIN_RATE_LIMIT_MAX: "1000"
     services:
       postgres:
         image: postgres:16
