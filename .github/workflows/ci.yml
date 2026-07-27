@@ -109,8 +109,12 @@ jobs:
       # database with no durability requirement, so relaxing checkpoint frequency is a
       # real fix, not a band-aid: fewer, less time-pressured checkpoints during the run.
       - run: |
-          PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c \
-            "ALTER SYSTEM SET checkpoint_timeout = '30min'; ALTER SYSTEM SET max_wal_size = '4GB'; SELECT pg_reload_conf();"
+          # Each ALTER SYSTEM in its own -c: a single -c string with multiple ;-separated
+          # statements runs as one implicit transaction block, and ALTER SYSTEM (unlike most
+          # DDL) is rejected inside any transaction block, explicit or implicit.
+          PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c "ALTER SYSTEM SET checkpoint_timeout = '30min';"
+          PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c "ALTER SYSTEM SET max_wal_size = '4GB';"
+          PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c "SELECT pg_reload_conf();"
       - run: npm run db:migrate
       - run: npm run test:e2e
 
@@ -143,7 +147,11 @@ jobs:
       # Same rationale as the e2e job above: avoid a mid-run checkpoint stall on this
       # disposable test database.
       - run: |
-          PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c \
-            "ALTER SYSTEM SET checkpoint_timeout = '30min'; ALTER SYSTEM SET max_wal_size = '4GB'; SELECT pg_reload_conf();"
+          # Each ALTER SYSTEM in its own -c: a single -c string with multiple ;-separated
+          # statements runs as one implicit transaction block, and ALTER SYSTEM (unlike most
+          # DDL) is rejected inside any transaction block, explicit or implicit.
+          PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c "ALTER SYSTEM SET checkpoint_timeout = '30min';"
+          PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c "ALTER SYSTEM SET max_wal_size = '4GB';"
+          PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c "SELECT pg_reload_conf();"
       - run: npm run db:migrate
       - run: npm run test:performance

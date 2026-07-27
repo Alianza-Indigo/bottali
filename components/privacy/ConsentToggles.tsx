@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 
 const CONSENT_LABELS: Record<string, string> = {
@@ -9,9 +9,33 @@ const CONSENT_LABELS: Record<string, string> = {
   marketing: "Recibir comunicaciones sobre nuevas herramientas",
 };
 
+interface ConsentRow {
+  kind: string;
+  granted: boolean;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
 export function ConsentToggles() {
   const [state, setState] = useState<Record<string, boolean>>({ memory: false, analytics: false, marketing: false });
   const [saving, setSaving] = useState<string | null>(null);
+
+  // Consents are append-only (GET returns the full history) — the current state of a kind
+  // is whatever its most recent row says, since rows are ordered by createdAt desc.
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ consents: ConsentRow[] }>("/api/v1/me/consents").then((res) => {
+      if (cancelled) return;
+      const latestByKind: Record<string, boolean> = {};
+      for (const row of res.consents) {
+        if (!(row.kind in latestByKind)) latestByKind[row.kind] = row.granted && !row.revokedAt;
+      }
+      setState((prev) => ({ ...prev, ...latestByKind }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const toggle = async (kind: string) => {
     const granted = !state[kind];
