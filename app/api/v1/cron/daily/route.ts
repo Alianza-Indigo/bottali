@@ -6,6 +6,7 @@ import { processPendingJobs } from "@/lib/jobs/service";
 import { processScheduledPublications } from "@/lib/tools/service";
 import { recordAuditEvent } from "@/lib/audit/log";
 import { handleApiError } from "@/lib/validation/http";
+import { reportOperationalAlerts } from "@/lib/analytics/alerts";
 
 const HANDLER_NAMES = ["cleanup_expired_files", "expire_pending_tool_confirmations", "retention_cleanup", "provider_health_check"] as const;
 
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
     const results: Record<string, unknown> = {};
     results.jobs = await processPendingJobs(200);
     results.publications = await processScheduledPublications();
+    results.operationalAlerts = await reportOperationalAlerts();
     for (const name of HANDLER_NAMES) {
       const handler = getJobHandler(name);
       if (!handler) throw new Error(`El manejador "${name}" no está registrado.`);

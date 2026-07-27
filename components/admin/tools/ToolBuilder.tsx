@@ -13,10 +13,12 @@ import { AccessSection } from "./sections/AccessSection";
 import { SafetySection } from "./sections/SafetySection";
 import { PwaSection } from "./sections/PwaSection";
 import { LifecyclePanel } from "./LifecyclePanel";
+import { getPublicationStatusTone, getVisibleToolStatus } from "@/lib/tools/presentation";
 
 export interface ToolBuilderProps {
   tool: { id: string; slug: string; status: string; publishedVersionId: string | null };
   versionId: string;
+  versionStatus: string;
   config: FullVersionConfig;
   versions: Array<{ id: string; versionNumber: number; status: string }>;
   providers: Array<{ id: string; name: string; kind: string }>;
@@ -34,15 +36,16 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
-export function ToolBuilder({ tool, versionId, config, versions, providers }: ToolBuilderProps) {
+export function ToolBuilder({ tool, versionId, versionStatus, config, versions, providers }: ToolBuilderProps) {
   const [tab, setTab] = useState<TabKey>("identity");
+  const visibleStatus = getVisibleToolStatus(tool.status);
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
       <div>
         <div className="mb-4 flex items-center gap-3">
           <h1 className="text-xl font-semibold text-ink">{config.branding?.name ?? tool.slug}</h1>
-          <Badge tone={tool.status === "PUBLISHED" ? "success" : "neutral"}>{tool.status}</Badge>
+          <Badge tone={getPublicationStatusTone(visibleStatus)}>{visibleStatus}</Badge>
         </div>
         <Card>
           <nav aria-label="Secciones de configuración" className="flex flex-wrap gap-1 border-b border-border p-2">
@@ -63,7 +66,7 @@ export function ToolBuilder({ tool, versionId, config, versions, providers }: To
           </div>
         </Card>
       </div>
-      <LifecyclePanel toolId={tool.id} versionId={versionId} versions={versions} toolStatus={tool.status} />
+      <LifecyclePanel toolId={tool.id} versionId={versionId} versionStatus={versionStatus} versions={versions} toolStatus={tool.status} />
     </div>
   );
 }

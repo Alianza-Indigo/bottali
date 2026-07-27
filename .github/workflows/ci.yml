@@ -77,6 +77,33 @@ jobs:
       - run: npm run db:migrate
       - run: npm run test:integration
 
+  migration-check:
+    name: Migration check (fresh Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crisis_platform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run db:migrate
+      - name: Verify schema and migrations are synchronized
+        run: |
+          npm run db:generate
+          test -z "$(git status --porcelain -- db/migrations)"
+
   e2e:
     name: E2E, security & accessibility (Playwright)
     runs-on: ubuntu-latest
@@ -162,3 +189,16 @@ jobs:
           PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c "SELECT pg_reload_conf();"
       - run: npm run db:migrate
       - run: npm run test:performance
+
+  quality-gate:
+    name: Quality gate
+    if: always()
+    needs: [lint-typecheck, unit, migration-check, integration, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every blocking check
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq .
+          test "$(echo "$NEEDS" | jq '[.[].result == "success"] | all')" = "true"

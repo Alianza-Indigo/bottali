@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, type DbOrTx } from "@/lib/db/client";
 import {
   toolAccessRules,
@@ -10,6 +10,7 @@ import {
   toolSafetyPolicies,
   toolVersions,
   tools,
+  providers,
 } from "@/db/schema";
 import { NotFoundError } from "@/lib/utils/errors";
 import { omit } from "@/lib/utils/object";
@@ -130,4 +131,31 @@ export async function findDraftVersion(toolId: string, executor: Tx = db) {
     .orderBy(desc(toolVersions.versionNumber))
     .limit(1);
   return rows[0] ?? null;
+}
+
+export async function listAdminTools(executor: Tx = db) {
+  const rows = await executor.select().from(tools).orderBy(desc(tools.createdAt));
+  const versionIds = rows.map((tool) => tool.draftVersionId ?? tool.publishedVersionId).filter((id): id is string => Boolean(id));
+  const brandingRows =
+    versionIds.length > 0
+      ? await executor
+          .select({ toolVersionId: toolBranding.toolVersionId, name: toolBranding.name })
+          .from(toolBranding)
+          .where(inArray(toolBranding.toolVersionId, versionIds))
+      : [];
+  const nameByVersion = new Map(brandingRows.map((branding) => [branding.toolVersionId, branding.name]));
+
+  return rows.map((tool) => {
+    const versionId = tool.draftVersionId ?? tool.publishedVersionId;
+    return { ...tool, name: (versionId && nameByVersion.get(versionId)) ?? tool.slug };
+  });
+}
+
+export async function getAdminToolBuilderData(toolId: string, executor: Tx = db) {
+  const [tool, versions, modelProviders] = await Promise.all([
+    getToolById(toolId, executor),
+    executor.select().from(toolVersions).where(eq(toolVersions.toolId, toolId)),
+    executor.select().from(providers).where(eq(providers.enabled, true)),
+  ]);
+  return { tool, versions, modelProviders };
 }

@@ -86,7 +86,11 @@ const externalApiEndpointSchema = z.object({
     .string()
     .url()
     .refine((u) => u.startsWith("https://"), "La URL debe usar HTTPS.")
-    .refine((u) => !PRIVATE_HOSTNAME_PATTERN.test(new URL(u).hostname), "No se permiten direcciones privadas/internas."),
+    .refine((u) => !PRIVATE_HOSTNAME_PATTERN.test(new URL(u).hostname), "No se permiten direcciones privadas/internas.")
+    .refine((u) => {
+      const url = new URL(u);
+      return !url.username && !url.password && (!url.port || url.port === "443");
+    }, "La URL no puede incluir credenciales ni puertos no estándar."),
   method: z.enum(["GET", "POST"]),
   description: z.string().max(200).optional(),
 });

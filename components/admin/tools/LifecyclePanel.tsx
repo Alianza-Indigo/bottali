@@ -10,15 +10,18 @@ import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
+import { getPublicationStatusTone, getVisibleVersionStatus } from "@/lib/tools/presentation";
 
 export function LifecyclePanel({
   toolId,
   versionId,
+  versionStatus,
   versions,
   toolStatus,
 }: {
   toolId: string;
   versionId: string;
+  versionStatus: string;
   versions: Array<{ id: string; versionNumber: number; status: string }>;
   toolStatus: string;
 }) {
@@ -95,6 +98,7 @@ export function LifecyclePanel({
     try {
       const result = await apiPost<{ reply: string }>(`/api/v1/admin/tools/${toolId}/versions/${versionId}/test`, { message: testMessage });
       setTestResult(result.reply);
+      router.refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Error al probar la herramienta.");
     } finally {
@@ -104,7 +108,7 @@ export function LifecyclePanel({
 
   return (
     <div className="flex flex-col gap-4">
-      <Card>
+      {(versionStatus === "DRAFT" || versionStatus === "TESTING") && <Card>
         <CardHeader>
           <h2 className="text-sm font-semibold text-ink">Probar</h2>
         </CardHeader>
@@ -115,7 +119,7 @@ export function LifecyclePanel({
           </Button>
           {testResult && <p className="rounded-md bg-surface-subtle p-2 text-xs text-ink">{testResult}</p>}
         </CardBody>
-      </Card>
+      </Card>}
 
       <Card>
         <CardHeader>
@@ -132,23 +136,23 @@ export function LifecyclePanel({
               </ul>
             </Alert>
           )}
-          <Button
+          {versionStatus === "TESTING" && <Button
             size="sm"
             variant="secondary"
             loading={busy === "review"}
             onClick={() => run("review", () => apiPost(`/api/v1/admin/tools/${toolId}/versions/${versionId}/review`))}
           >
             Enviar a revisión
-          </Button>
-          <Button
+          </Button>}
+          {versionStatus === "UNDER_REVIEW" && <Button
             size="sm"
             variant="secondary"
             loading={busy === "approve"}
             onClick={() => run("approve", () => apiPost(`/api/v1/admin/tools/${toolId}/versions/${versionId}/approve`))}
           >
             Aprobar
-          </Button>
-          <div className="flex gap-2">
+          </Button>}
+          {versionStatus === "APPROVED" && <div className="flex gap-2">
             <Button
               size="sm"
               loading={busy === "publish"}
@@ -159,8 +163,8 @@ export function LifecyclePanel({
             <Button size="sm" variant="secondary" onClick={() => setShowSchedule((v) => !v)}>
               Programar
             </Button>
-          </div>
-          {showSchedule && (
+          </div>}
+          {versionStatus === "APPROVED" && showSchedule && (
             <div className="flex items-end gap-2 rounded border border-border p-2">
               <div className="flex-1">
                 <Label htmlFor="schedule-date">Fecha y hora de publicación</Label>
@@ -191,14 +195,14 @@ export function LifecyclePanel({
               Suspender
             </Button>
           )}
-          <Button
+          {["PUBLISHED", "PAUSED", "SUSPENDED"].includes(toolStatus) && <Button
             size="sm"
             variant="ghost"
             loading={busy === "archive"}
             onClick={() => run("archive", () => apiPost(`/api/v1/admin/tools/${toolId}/archive`))}
           >
             Archivar
-          </Button>
+          </Button>}
         </CardBody>
       </Card>
 
@@ -210,7 +214,9 @@ export function LifecyclePanel({
           <p className="text-xs text-ink-faint">Selecciona dos versiones para comparar su configuración.</p>
           {versions
             .sort((a, b) => b.versionNumber - a.versionNumber)
-            .map((v) => (
+            .map((v) => {
+              const visibleStatus = getVisibleVersionStatus(v.status);
+              return (
               <div key={v.id} className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -220,7 +226,7 @@ export function LifecyclePanel({
                   className="h-4 w-4 rounded border-border-strong"
                 />
                 <span className="text-ink">v{v.versionNumber}</span>
-                <Badge tone={v.status === "PUBLISHED" ? "success" : "neutral"}>{v.status}</Badge>
+                <Badge tone={getPublicationStatusTone(visibleStatus)}>{visibleStatus}</Badge>
                 {v.status === "SUPERSEDED" && (
                   <Button
                     size="sm"
@@ -232,7 +238,8 @@ export function LifecyclePanel({
                   </Button>
                 )}
               </div>
-            ))}
+              );
+            })}
           <Button size="sm" variant="secondary" className="self-start" disabled={compareSelection.length !== 2} loading={busy === "compare"} onClick={runCompare}>
             Comparar versiones seleccionadas
           </Button>

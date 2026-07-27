@@ -137,7 +137,7 @@ async function executeToolCallForPipeline(
   }
 
   if (isExternalApiToolName(call.name)) {
-    const result = await executeExternalApiCall(call.name, parsedInput, externalApiEndpoints);
+    const result = await executeExternalApiCall(call.name, parsedInput, externalApiEndpoints, context);
     return JSON.stringify(result);
   }
 

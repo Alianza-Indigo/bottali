@@ -30,3 +30,5 @@ npm run build
 
 Ver [`docs/deployment-vercel.md`](docs/deployment-vercel.md) para variables
 de entorno, servicios externos requeridos y pasos de despliegue en Vercel.
+La configuración de un ambiente previo equivalente está en
+[`docs/staging.md`](docs/staging.md).

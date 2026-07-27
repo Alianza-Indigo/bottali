@@ -16,7 +16,7 @@ import { recordAuditEvent } from "@/lib/audit/log";
 import { ConflictError, ValidationError } from "@/lib/utils/errors";
 import type { CreateToolInput, BrandingInput, BehaviorInput, ModelsInput, CapabilitiesInput, AccessRulesInput, SafetyPoliciesInput, PwaConfigInput } from "@/lib/validation/tools";
 import { assertValidToolTransition, assertValidVersionTransition, isValidToolTransition, type ToolStatus, type ToolVersionStatus } from "./state-machine";
-import { copyVersionConfig, findDraftVersion, getLatestVersionNumber, getToolById, getVersionById, loadVersionConfig } from "./repository";
+import { copyVersionConfig, getLatestVersionNumber, getToolById, getVersionById, loadVersionConfig } from "./repository";
 import { assertSlugAvailable, validateVersionForPublish } from "./validation-publish";
 
 async function insertDefaultVersionScaffold(tx: DbOrTx, toolVersionId: string, input: Pick<CreateToolInput, "name" | "shortName" | "description">) {
@@ -74,11 +74,15 @@ export async function createTool(input: CreateToolInput, actorId: string): Promi
 /** Returns the version currently open for editing, creating a fresh DRAFT (copied from the
  * published version) if the tool has none — edits never touch a PUBLISHED version's rows. */
 export async function ensureEditableDraftVersion(toolId: string, actorId: string): Promise<string> {
-  const existingDraft = await findDraftVersion(toolId);
-  if (existingDraft) return existingDraft.id;
-
   const tool = await getToolById(toolId);
-  const sourceVersionId = tool.draftVersionId ?? tool.publishedVersionId;
+  if (tool.draftVersionId) {
+    const activeVersion = await getVersionById(tool.draftVersionId);
+    if (["DRAFT", "TESTING", "UNDER_REVIEW", "APPROVED", "SCHEDULED"].includes(activeVersion.status)) {
+      return activeVersion.id;
+    }
+  }
+
+  const sourceVersionId = tool.publishedVersionId;
   if (!sourceVersionId) throw new ConflictError("La herramienta no tiene una versión base para editar.");
 
   return db.transaction(async (tx) => {
