@@ -27,6 +27,25 @@ export async function parseJsonBody<T>(request: Request, schema: AnyInputSchema<
   return parsed.data;
 }
 
+export async function parseOptionalJsonBody<T>(request: Request, schema: AnyInputSchema<T>): Promise<T> {
+  const text = await request.text();
+  if (!text.trim()) {
+    const parsed = schema.safeParse({});
+    if (!parsed.success) throw new ValidationError("Datos inválidos.", parsed.error.flatten());
+    return parsed.data;
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new AppError("El cuerpo de la solicitud debe ser JSON válido.", "INVALID_JSON", 400);
+  }
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) throw new ValidationError("Datos inválidos.", parsed.error.flatten());
+  return parsed.data;
+}
+
 export async function handleApiError(error: unknown): Promise<NextResponse> {
   if (error instanceof ValidationError) {
     return NextResponse.json(

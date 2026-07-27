@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { backgroundJobs } from "@/db/schema";
 import { getJobHandler } from "./registry";
@@ -43,9 +43,17 @@ export async function createJobRecord(
       scheduledAt: options.scheduledAt ?? new Date(),
       createdBy,
     })
+    .onConflictDoNothing({ target: backgroundJobs.idempotencyKey })
     .returning({ id: backgroundJobs.id });
-  if (!job) throw new Error("No fue posible crear el trabajo.");
-  return job.id;
+  if (job) return job.id;
+
+  const concurrent = await db
+    .select({ id: backgroundJobs.id })
+    .from(backgroundJobs)
+    .where(eq(backgroundJobs.idempotencyKey, idempotencyKey))
+    .limit(1);
+  if (!concurrent[0]) throw new Error("No fue posible crear el trabajo.");
+  return concurrent[0].id;
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatus | null> {
@@ -54,14 +62,22 @@ export async function getJobStatus(jobId: string): Promise<JobStatus | null> {
 }
 
 export async function requestJobCancellation(jobId: string): Promise<void> {
-  const rows = await db.select({ status: backgroundJobs.status }).from(backgroundJobs).where(eq(backgroundJobs.id, jobId)).limit(1);
-  const status = rows[0]?.status;
-  if (!status) return;
-  if (["CREATED", "QUEUED", "RETRYING"].includes(status)) {
-    await db.update(backgroundJobs).set({ status: "CANCELLED", updatedAt: new Date() }).where(eq(backgroundJobs.id, jobId));
-  } else if (status === "RUNNING") {
-    await db.update(backgroundJobs).set({ status: "CANCELLING", updatedAt: new Date() }).where(eq(backgroundJobs.id, jobId));
-  }
+  const [cancelled] = await db
+    .update(backgroundJobs)
+    .set({ status: "CANCELLED", updatedAt: new Date() })
+    .where(
+      and(
+        eq(backgroundJobs.id, jobId),
+        inArray(backgroundJobs.status, ["CREATED", "QUEUED", "RETRYING"]),
+      ),
+    )
+    .returning({ id: backgroundJobs.id });
+  if (cancelled) return;
+
+  await db
+    .update(backgroundJobs)
+    .set({ status: "CANCELLING", updatedAt: new Date() })
+    .where(and(eq(backgroundJobs.id, jobId), eq(backgroundJobs.status, "RUNNING")));
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -84,16 +100,36 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * is a no-op, which is what makes at-least-once cron polling safe.
  */
 export async function runJob(jobId: string): Promise<JobStatus> {
-  const rows = await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, jobId)).limit(1);
-  const job = rows[0];
-  if (!job) throw new Error(`Trabajo no encontrado: ${jobId}`);
+  const now = new Date();
+  const [job] = await db
+    .update(backgroundJobs)
+    .set({
+      status: "RUNNING",
+      attempt: sql`${backgroundJobs.attempt} + 1`,
+      startedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(backgroundJobs.id, jobId),
+        inArray(backgroundJobs.status, ["CREATED", "QUEUED", "RETRYING"]),
+      ),
+    )
+    .returning();
 
-  if (["COMPLETED", "FAILED", "CANCELLED", "DEAD_LETTER"].includes(job.status)) {
-    return toJobStatus(job);
-  }
-  if (job.status === "CANCELLING") {
-    await db.update(backgroundJobs).set({ status: "CANCELLED", updatedAt: new Date() }).where(eq(backgroundJobs.id, jobId));
-    return toJobStatus({ ...job, status: "CANCELLED" });
+  if (!job) {
+    const rows = await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, jobId)).limit(1);
+    const current = rows[0];
+    if (!current) throw new Error(`Trabajo no encontrado: ${jobId}`);
+    if (current.status === "CANCELLING") {
+      const [cancelled] = await db
+        .update(backgroundJobs)
+        .set({ status: "CANCELLED", updatedAt: new Date() })
+        .where(and(eq(backgroundJobs.id, jobId), eq(backgroundJobs.status, "CANCELLING")))
+        .returning();
+      return toJobStatus(cancelled ?? current);
+    }
+    return toJobStatus(current);
   }
 
   const handler = getJobHandler(job.type);
@@ -101,12 +137,15 @@ export async function runJob(jobId: string): Promise<JobStatus> {
     await db
       .update(backgroundJobs)
       .set({ status: "DEAD_LETTER", errorCode: "UNKNOWN_JOB_TYPE", errorMessage: `Tipo de trabajo no registrado: ${job.type}`, updatedAt: new Date() })
-      .where(eq(backgroundJobs.id, jobId));
+      .where(and(eq(backgroundJobs.id, jobId), eq(backgroundJobs.status, "RUNNING")));
+    await db
+      .update(backgroundJobs)
+      .set({ status: "CANCELLED", updatedAt: new Date() })
+      .where(and(eq(backgroundJobs.id, jobId), eq(backgroundJobs.status, "CANCELLING")));
     return (await getJobStatus(jobId))!;
   }
 
-  const attempt = job.attempt + 1;
-  await db.update(backgroundJobs).set({ status: "RUNNING", attempt, startedAt: new Date(), updatedAt: new Date() }).where(eq(backgroundJobs.id, jobId));
+  const attempt = job.attempt;
 
   try {
     const result = await withTimeout(
@@ -115,11 +154,14 @@ export async function runJob(jobId: string): Promise<JobStatus> {
         attempt,
         maxAttempts: job.maxAttempts,
         async reportProgress(progress: number) {
-          await db.update(backgroundJobs).set({ progress, updatedAt: new Date() }).where(eq(backgroundJobs.id, jobId));
+          await db
+            .update(backgroundJobs)
+            .set({ progress, updatedAt: new Date() })
+            .where(and(eq(backgroundJobs.id, jobId), eq(backgroundJobs.status, "RUNNING")));
         },
         async isCancelled() {
           const current = await db.select({ status: backgroundJobs.status }).from(backgroundJobs).where(eq(backgroundJobs.id, jobId)).limit(1);
-          return current[0]?.status === "CANCELLING";
+          return current[0]?.status === "CANCELLING" || current[0]?.status === "CANCELLED";
         },
       }),
       DEFAULT_JOB_TIMEOUT_MS,
@@ -128,14 +170,22 @@ export async function runJob(jobId: string): Promise<JobStatus> {
     await db
       .update(backgroundJobs)
       .set({ status: "COMPLETED", result: result ?? {}, progress: 100, completedAt: new Date(), updatedAt: new Date() })
-      .where(eq(backgroundJobs.id, jobId));
+      .where(and(eq(backgroundJobs.id, jobId), eq(backgroundJobs.status, "RUNNING")));
+    await db
+      .update(backgroundJobs)
+      .set({ status: "CANCELLED", updatedAt: new Date() })
+      .where(and(eq(backgroundJobs.id, jobId), eq(backgroundJobs.status, "CANCELLING")));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error desconocido";
     const nextStatus: JobStatusValue = attempt >= job.maxAttempts ? "DEAD_LETTER" : "RETRYING";
     await db
       .update(backgroundJobs)
       .set({ status: nextStatus, errorCode: "EXECUTION_ERROR", errorMessage: message, updatedAt: new Date() })
-      .where(eq(backgroundJobs.id, jobId));
+      .where(and(eq(backgroundJobs.id, jobId), eq(backgroundJobs.status, "RUNNING")));
+    await db
+      .update(backgroundJobs)
+      .set({ status: "CANCELLED", updatedAt: new Date() })
+      .where(and(eq(backgroundJobs.id, jobId), eq(backgroundJobs.status, "CANCELLING")));
   }
 
   return (await getJobStatus(jobId))!;
@@ -148,7 +198,7 @@ export async function processPendingJobs(batchSize = 10): Promise<{ processed: n
   const due = await db
     .select({ id: backgroundJobs.id })
     .from(backgroundJobs)
-    .where(and(inArray(backgroundJobs.status, ["QUEUED", "RETRYING"]), lt(backgroundJobs.scheduledAt, new Date())))
+    .where(and(inArray(backgroundJobs.status, ["QUEUED", "RETRYING"]), lte(backgroundJobs.scheduledAt, new Date())))
     .limit(batchSize);
 
   for (const row of due) {

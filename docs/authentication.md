@@ -78,20 +78,17 @@ lanza `UnauthorizedError` si no hay sesión válida.
 3. Normaliza el correo (`trim().toLowerCase()`) y comprueba duplicados. Si el
    correo ya existe, **responde con el mismo mensaje de éxito** (201) que en
    el caso feliz, para no revelar qué correos están registrados; solo se
-   registra un evento de auditoría (`auth.register.duplicate`).
+   registra un evento de auditoría (`auth.register.duplicate`). El índice
+   único sobre `lower(email)` y `ON CONFLICT DO NOTHING` cierran también la
+   carrera entre dos registros simultáneos.
 4. Crea el usuario, su perfil (`userProfiles`) y le asigna el rol `USER`
    dentro de una transacción.
 5. Registra el evento de auditoría `auth.register`.
 
-**Estado actual (importante):** el bloque de creación del usuario tiene una
-nota explícita en el código marcada `TEMPORAL` — la verificación de correo
-está **desactivada a petición explícita**: las cuentas se crean directamente
+**Estado actual (importante):** la verificación de correo está
+**desactivada para cuentas nuevas**: las cuentas se crean directamente
 con `status: "ACTIVE"` y `emailVerifiedAt` puesto a la hora de creación, sin
-generar `emailVerificationTokens` ni enviar correo de verificación. El
-comentario en `app/api/v1/auth/register/route.ts` deja instrucciones de cómo
-reactivarlo (volver a `status: "PENDING_VERIFICATION"` sin
-`emailVerifiedAt`, restaurar el bloque de generación de token + envío de
-correo, y ajustar el mensaje de éxito).
+generar `emailVerificationTokens` ni enviar correo de verificación.
 
 Los endpoints de verificación de correo siguen existiendo e implementados
 por completo, listos para ese momento:

@@ -1,8 +1,9 @@
 import { eq } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { db } from "@/lib/db/client";
 import { toolBehavior, tools } from "@/db/schema";
 import { requireCurrentUser } from "@/lib/auth/current-user";
+import { canUserAccessTool } from "@/lib/tools/access";
 import { Card, CardBody } from "@/components/ui/Card";
 import { ToolMemorySettings } from "@/components/chat/ToolMemorySettings";
 
@@ -17,11 +18,12 @@ const MEMORY_MODE_LABELS: Record<string, string> = {
 
 export default async function ToolSettingsPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  await requireCurrentUser();
+  const user = await requireCurrentUser();
 
   const toolRows = await db.select().from(tools).where(eq(tools.slug, slug)).limit(1);
   const tool = toolRows[0];
-  if (!tool || !tool.publishedVersionId) notFound();
+  if (!tool || tool.status !== "PUBLISHED" || !tool.publishedVersionId) notFound();
+  if (!(await canUserAccessTool(tool.id, user.id))) redirect(`/tools/${slug}`);
 
   const [behavior] = await db.select().from(toolBehavior).where(eq(toolBehavior.toolVersionId, tool.publishedVersionId)).limit(1);
   const memoryMode = behavior?.memoryMode ?? "DISABLED";

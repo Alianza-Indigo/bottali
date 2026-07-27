@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { wrapToolResultForModel } from "@/lib/conversations/pipeline";
+import { wrapToolResultForModel } from "@/lib/conversations/tool-result";
 
 describe("wrapToolResultForModel", () => {
   it("wraps a short result with the data-not-instructions framing, unmodified", () => {

@@ -1,6 +1,20 @@
-# Checklist verificado de criterios de aceptación (spec §47)
+# Registro histórico del checklist de aceptación (spec §47)
 
-Última verificación: 2026-07-26, contra el commit `074d244` (rama `claude/access-ajueor`).
+> Este documento conserva la verificación ejecutada el 2026-07-26 contra el commit
+> `074d244` (rama `claude/access-ajueor`). Sus cifras y estados no describen automáticamente
+> el HEAD actual. La guía viva y el inventario actual de pruebas están en `docs/testing.md`.
+
+Verificación local más reciente del árbol de trabajo (2026-07-27):
+
+- `npm run lint`: correcto.
+- `npm run typecheck`: correcto.
+- `npm run test`: 22/22 pruebas unitarias, 5/5 archivos.
+- `npm run db:generate`: migración `0009_happy_winter_soldier.sql` generada correctamente.
+- Integración, E2E, seguridad, accesibilidad y rendimiento no se volvieron a ejecutar en
+  esta verificación porque requieren Postgres y/o el servidor completo.
+
+## Snapshot de 2026-07-26
+
 Metodología: cada fila cita el comando o archivo de prueba real ejecutado, no una suposición.
 Cuando un criterio no pudo verificarse en este entorno (p. ej. herramientas ausentes del
 sandbox), se marca explícitamente como tal en lugar de darlo por bueno.

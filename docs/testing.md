@@ -30,8 +30,8 @@ obligatorias en CI:
   └─────────────┘  └──────────────────┘  └───────────────┘
 ```
 
-En total, al momento de escribir esta guía la suite tiene **114 pruebas**:
-19 unitarias, 55 de integración, 16 e2e, 9 de seguridad, 5 de accesibilidad y
+En total, al momento de actualizar esta guía la suite tiene **132 pruebas**:
+22 unitarias, 57 de integración, 16 e2e, 22 de seguridad, 5 de accesibilidad y
 10 de rendimiento.
 
 La regla general: unitarias no tocan la base de datos ni la red; integración
@@ -270,7 +270,7 @@ toda la suite.
 | Archivo | Qué cubre |
 |---|---|
 | `admin.spec.ts` | Un super admin entra al panel y ve la navegación administrativa; puede crear una herramienta desde el asistente; puede crear un usuario que recibe un correo para definir su contraseña; un usuario final es redirigido fuera del panel administrativo. |
-| `auth.spec.ts` | Registro válido crea la cuenta y permite iniciar sesión de inmediato; login con credenciales inválidas muestra un error genérico; login con credenciales demo lleva al dashboard autenticado. |
+| `auth.spec.ts` | Registro válido crea una cuenta activa y permite iniciar sesión; login con credenciales inválidas muestra un error genérico; login con credenciales demo lleva al dashboard autenticado. |
 | `catalog-chat.spec.ts` | Un usuario activa una herramienta publicada del catálogo y conversa con ella. |
 | `form-input.spec.ts` | Un usuario completa un formulario solicitado por el asistente (`collect_form_input`) y la respuesta lo refleja. |
 | `pwa.spec.ts` | Los assets del shell PWA (manifest, íconos, página offline) responden; el manifest de la plataforma referencia los tres íconos requeridos; el service worker se registra y queda activo en el navegador; una herramienta publicada con PWA habilitada expone su propio manifest dinámico. |

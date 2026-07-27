@@ -62,10 +62,11 @@ variable de entorno — ver la sección 5.
 
 ## 3. Capas dentro de `lib/`
 
-El patrón de dependencia es siempre el mismo: **`app/api/v1/**/route.ts` valida
-la request y la sesión, delega en un servicio de `lib/`, y el servicio es el
-único que toca `db/schema` a través de `lib/db/client.ts`.** Ningún Route Handler
-ejecuta SQL/Drizzle directamente.
+El patrón de dependencia preferido es que **`app/api/v1/**/route.ts` valide la
+request y la sesión, y delegue la lógica de negocio y las mutaciones reutilizables
+en servicios de `lib/`.** Algunos Route Handlers y Server Components realizan
+lecturas Drizzle simples y acotadas directamente; el acceso compartido, las
+máquinas de estado y las operaciones con invariantes permanecen en `lib/`.
 
 | Capa (`lib/...`) | Qué contiene | Consumida por |
 |---|---|---|

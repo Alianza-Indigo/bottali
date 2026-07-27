@@ -83,6 +83,38 @@ describe("job providers (real Postgres, no external queue)", () => {
     expect(rerun.attempt).toBe(completed.attempt); // did not run again
   });
 
+  it("atomically claims a job so concurrent workers execute it only once", async () => {
+    const type = `test-concurrent-${randomUUID().slice(0, 8)}`;
+    let executions = 0;
+    let releaseHandler!: () => void;
+    let signalStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+    registerOnce(type, async () => {
+      executions += 1;
+      signalStarted();
+      await release;
+      return { ok: true };
+    });
+
+    const id = await createJobRecord(type, {});
+    const firstWorker = runJob(id);
+    await started;
+
+    const secondWorker = await runJob(id);
+    expect(secondWorker.status).toBe("RUNNING");
+    expect(executions).toBe(1);
+
+    releaseHandler();
+    const completed = await firstWorker;
+    expect(completed.status).toBe("COMPLETED");
+    expect(executions).toBe(1);
+  });
+
   it("getJobStatus returns null for an unknown job id", async () => {
     const status = await getJobStatus(randomUUID());
     expect(status).toBeNull();

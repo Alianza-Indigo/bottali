@@ -6,9 +6,11 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { sessionStatusEnum, userStatusEnum } from "./enums";
 
 export const users = pgTable(
@@ -28,7 +30,7 @@ export const users = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (table) => [
-    index("users_email_lower_idx").on(table.email),
+    uniqueIndex("users_email_unique_idx").on(sql`lower(${table.email})`),
     index("users_status_idx").on(table.status),
   ],
 );

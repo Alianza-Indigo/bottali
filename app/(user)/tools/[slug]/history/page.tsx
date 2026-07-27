@@ -1,9 +1,10 @@
 import { and, desc, eq } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { db } from "@/lib/db/client";
 import { conversations, tools } from "@/db/schema";
 import { requireCurrentUser } from "@/lib/auth/current-user";
+import { canUserAccessTool } from "@/lib/tools/access";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -27,7 +28,8 @@ export default async function ToolHistoryPage({
 
   const toolRows = await db.select().from(tools).where(eq(tools.slug, slug)).limit(1);
   const tool = toolRows[0];
-  if (!tool) notFound();
+  if (!tool || tool.status !== "PUBLISHED" || !tool.publishedVersionId) notFound();
+  if (!(await canUserAccessTool(tool.id, user.id))) redirect(`/tools/${slug}`);
 
   const whereClause = and(eq(conversations.userId, user.id), eq(conversations.toolId, tool.id), eq(conversations.status, "ARCHIVED"));
 

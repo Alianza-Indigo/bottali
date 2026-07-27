@@ -5,24 +5,25 @@ import { canUserAccessTool } from "@/lib/tools/access";
 import { getToolById } from "@/lib/tools/repository";
 import { createConversation, listConversations } from "@/lib/conversations/service";
 import { parseJsonBody, handleApiError } from "@/lib/validation/http";
-import { ForbiddenError } from "@/lib/utils/errors";
+import { ForbiddenError, ValidationError } from "@/lib/utils/errors";
 
 const createSchema = z.object({ toolId: z.string().uuid() });
+const listQuerySchema = z.object({
+  toolId: z.string().uuid().optional(),
+  status: z.enum(["ACTIVE", "ARCHIVED"]).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
 
 export async function GET(request: Request) {
   try {
     const user = await requireCurrentUser();
     const url = new URL(request.url);
-    const toolId = url.searchParams.get("toolId") ?? undefined;
-    const status = url.searchParams.get("status") as "ACTIVE" | "ARCHIVED" | null;
-    const limitParam = url.searchParams.get("limit");
-    const offsetParam = url.searchParams.get("offset");
-    const conversations = await listConversations(user.id, {
-      toolId,
-      status: status ?? undefined,
-      limit: limitParam ? Number(limitParam) : undefined,
-      offset: offsetParam ? Number(offsetParam) : undefined,
-    });
+    const parsed = listQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+    if (!parsed.success) {
+      throw new ValidationError("Parámetros de paginación inválidos.", parsed.error.flatten());
+    }
+    const conversations = await listConversations(user.id, parsed.data);
     return NextResponse.json({ conversations });
   } catch (error) {
     return handleApiError(error);

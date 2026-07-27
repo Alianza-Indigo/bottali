@@ -34,7 +34,7 @@ Definidas en `db/schema/auth.ts`.
 
 | Tabla | Descripción | Columnas clave | Relaciones |
 |---|---|---|---|
-| `users` | Cuenta de usuario de la plataforma. | `email` (varchar 320, sin unique index declarado a nivel de constraint, solo índice `users_email_lower_idx`), `password_hash`, `status` (`user_status`, default `PENDING_VERIFICATION`), `is_demo` boolean, `failed_login_attempts` int default 0, `locked_until`, `last_login_at`, `deleted_at` (soft delete) | Raíz de casi todas las FKs del sistema |
+| `users` | Cuenta de usuario de la plataforma. | `email` (varchar 320, índice único `users_email_unique_idx` sobre `lower(email)`), `password_hash`, `status` (`user_status`, default `PENDING_VERIFICATION`; el registro público crea cuentas `ACTIVE`), `is_demo` boolean, `failed_login_attempts` int default 0, `locked_until`, `last_login_at`, `deleted_at` (soft delete) | Raíz de casi todas las FKs del sistema |
 | `user_profiles` | Perfil/preferencias de UI de un usuario (1:1). | `user_id` (PK, FK a `users.id` ON DELETE CASCADE), `display_name`, `avatar_url`, `locale` default `"es"`, `timezone` default `"UTC"`, `accessibility_preferences` jsonb tipado (`theme`, `reducedMotion`, `highContrast`, `lowStimulus`, `textScale`), `ui_state` jsonb libre (`Record<string, unknown>`) | `users` (1:1, PK compartida) |
 | `sessions` | Sesión de navegador/API autenticada. | `token_hash`, `status` (`session_status`: `ACTIVE`/`REVOKED`/`EXPIRED`), `user_agent`, `ip_truncated`, `expires_at` (notNull), `revoked_at`, **`mfa_verified_at`** (nullable) | `users` (cascade) |
 | `email_verification_tokens` | Token de verificación de correo. | `token_hash`, `email`, `expires_at` (notNull), `consumed_at` | `users` (cascade) |

@@ -35,8 +35,10 @@ export async function listConversations(
   const filters = [eq(conversations.userId, userId), isNull(conversations.deletedAt)];
   if (options.toolId) filters.push(eq(conversations.toolId, options.toolId));
   if (options.status) filters.push(eq(conversations.status, options.status));
-  const limit = Math.min(options.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
-  const offset = Math.max(options.offset ?? 0, 0);
+  const requestedLimit = Number.isFinite(options.limit) ? Math.trunc(options.limit!) : DEFAULT_PAGE_SIZE;
+  const requestedOffset = Number.isFinite(options.offset) ? Math.trunc(options.offset!) : 0;
+  const limit = Math.max(1, Math.min(requestedLimit, MAX_PAGE_SIZE));
+  const offset = Math.max(requestedOffset, 0);
   return db
     .select()
     .from(conversations)

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUserWithPermission } from "@/lib/permissions/require";
-import { getVersionById, loadVersionConfig } from "@/lib/tools/repository";
+import { getVersionForTool, loadVersionConfig } from "@/lib/tools/repository";
 import {
   updateAccessRules,
   updateBehavior,
@@ -35,8 +35,8 @@ const patchSchema = z.object({
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string; versionId: string }> }) {
   try {
     await requireUserWithPermission("tools.read");
-    const { versionId } = await params;
-    const version = await getVersionById(versionId);
+    const { id, versionId } = await params;
+    const version = await getVersionForTool(id, versionId);
     const config = await loadVersionConfig(versionId);
     return NextResponse.json({ version, config });
   } catch (error) {
@@ -46,10 +46,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
 /** Applies one or more config sections to a DRAFT version in a single call — the admin
  * builder wizard (§9) can save a section at a time or several together. */
-export async function PATCH(request: Request, { params }: { params: Promise<{ versionId: string }> }) {
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string; versionId: string }> }) {
   try {
     const user = await requireUserWithPermission("tools.update");
-    const { versionId } = await params;
+    const { id, versionId } = await params;
+    await getVersionForTool(id, versionId);
     const body = await parseJsonBody(request, patchSchema);
 
     if (body.branding) await updateBranding(versionId, body.branding, user.id);

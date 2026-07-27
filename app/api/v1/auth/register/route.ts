@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { legalAcceptances, legalDocuments, userProfiles, userRoles, users } from "@/db/schema";
+import {
+  legalAcceptances,
+  legalDocuments,
+  userProfiles,
+  userRoles,
+  users,
+} from "@/db/schema";
 import { registerSchema } from "@/lib/validation/auth";
 import { parseJsonBody, handleApiError } from "@/lib/validation/http";
 import { hashPassword, evaluatePasswordStrength } from "@/lib/auth/password";
@@ -10,6 +16,10 @@ import { getRequestMetadata } from "@/lib/auth/session";
 import { recordAuditEvent } from "@/lib/audit/log";
 import { getRoleIdsByKeys } from "@/lib/permissions/rbac";
 import { ValidationError, RateLimitError } from "@/lib/utils/errors";
+
+const GENERIC_RESPONSE = {
+  message: "Cuenta creada. Ya puedes iniciar sesión.",
+};
 
 export async function POST(request: Request) {
   try {
@@ -33,25 +43,23 @@ export async function POST(request: Request) {
         resourceType: "user",
         result: "FAILURE",
       });
-      return NextResponse.json(
-        { message: "Si el correo es válido, recibirás instrucciones para verificar tu cuenta." },
-        { status: 201 },
-      );
+      return NextResponse.json(GENERIC_RESPONSE, { status: 201 });
     }
 
     const passwordHash = await hashPassword(body.password);
 
-    // TEMPORAL: verificación de correo desactivada a petición explícita — las cuentas se
-    // crean directamente ACTIVE en vez de PENDING_VERIFICATION, sin token ni correo de
-    // verificación. Para reactivarla: volver a status: "PENDING_VERIFICATION" (sin
-    // emailVerifiedAt) y restaurar el bloque que crea el emailVerificationTokens y envía el
-    // correo (ver git history de este archivo), y ajustar el mensaje de éxito de vuelta.
     const userId = await db.transaction(async (tx) => {
       const [user] = await tx
         .insert(users)
-        .values({ email: normalizedEmail, passwordHash, status: "ACTIVE", emailVerifiedAt: new Date() })
+        .values({
+          email: normalizedEmail,
+          passwordHash,
+          status: "ACTIVE",
+          emailVerifiedAt: new Date(),
+        })
+        .onConflictDoNothing()
         .returning({ id: users.id });
-      if (!user) throw new Error("No fue posible crear el usuario.");
+      if (!user) return null;
 
       await tx.insert(userProfiles).values({ userId: user.id, displayName: body.displayName });
 
@@ -77,6 +85,15 @@ export async function POST(request: Request) {
       return user.id;
     });
 
+    if (!userId) {
+      await recordAuditEvent({
+        action: "auth.register.duplicate",
+        resourceType: "user",
+        result: "FAILURE",
+      });
+      return NextResponse.json(GENERIC_RESPONSE, { status: 201 });
+    }
+
     await recordAuditEvent({
       actorId: userId,
       action: "auth.register",
@@ -84,7 +101,7 @@ export async function POST(request: Request) {
       resourceId: userId,
     });
 
-    return NextResponse.json({ message: "Cuenta creada. Ya puedes iniciar sesión." }, { status: 201 });
+    return NextResponse.json(GENERIC_RESPONSE, { status: 201 });
   } catch (error) {
     return handleApiError(error);
   }

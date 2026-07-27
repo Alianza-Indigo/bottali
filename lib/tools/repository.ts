@@ -35,6 +35,17 @@ export async function getVersionById(versionId: string, executor: Tx = db) {
   return version;
 }
 
+export async function getVersionForTool(toolId: string, versionId: string, executor: Tx = db) {
+  const rows = await executor
+    .select()
+    .from(toolVersions)
+    .where(and(eq(toolVersions.id, versionId), eq(toolVersions.toolId, toolId)))
+    .limit(1);
+  const version = rows[0];
+  if (!version) throw new NotFoundError("Versión de herramienta no encontrada.");
+  return version;
+}
+
 export async function getLatestVersionNumber(toolId: string, executor: Tx = db): Promise<number> {
   const rows = await executor
     .select({ versionNumber: toolVersions.versionNumber })
