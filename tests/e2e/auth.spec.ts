@@ -5,17 +5,23 @@ test.describe("Autenticación", () => {
   test("el registro público redirige al acceso con Google", async ({ page }) => {
     await page.goto("/register");
     await expect(page).toHaveURL(/\/login/);
-    await expect(page.getByRole("button", { name: "Continuar con Google" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Continuar con Google" })).toBeVisible();
   });
 
   test("la pantalla de acceso conserva un destino interno seguro", async ({ page }) => {
     await page.goto("/login?next=%2Ftools");
-    await expect(page.locator('input[name="next"]')).toHaveValue("/tools");
+    await expect(page.getByRole("link", { name: "Continuar con Google" })).toHaveAttribute(
+      "href",
+      "/api/v1/auth/google/start?next=%2Ftools",
+    );
   });
 
   test("la pantalla de acceso descarta destinos externos", async ({ page }) => {
     await page.goto("/login?next=https%3A%2F%2Fevil.example");
-    await expect(page.locator('input[name="next"]')).toHaveValue("/dashboard");
+    await expect(page.getByRole("link", { name: "Continuar con Google" })).toHaveAttribute(
+      "href",
+      "/api/v1/auth/google/start?next=%2Fdashboard",
+    );
   });
 
   test("el endpoint heredado rechaza credenciales inválidas de forma genérica", async ({ page }) => {
