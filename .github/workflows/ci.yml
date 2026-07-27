@@ -102,6 +102,15 @@ jobs:
       # actually download one here. playwright.config.ts's executablePath resolver falls
       # back to Playwright's own default resolution when the sandbox path is absent.
       - run: npx playwright install --with-deps chromium
+      # Default Postgres paces its automatic checkpoint (checkpoint_timeout=5min,
+      # completion_target=0.9) to land right in the middle of this job's ~4-5 minute
+      # Playwright run — its final fsync phase can stall queries for tens of seconds,
+      # well past a single test's 30s timeout. This is an ephemeral, disposable test
+      # database with no durability requirement, so relaxing checkpoint frequency is a
+      # real fix, not a band-aid: fewer, less time-pressured checkpoints during the run.
+      - run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c \
+            "ALTER SYSTEM SET checkpoint_timeout = '30min'; ALTER SYSTEM SET max_wal_size = '4GB'; SELECT pg_reload_conf();"
       - run: npm run db:migrate
       - run: npm run test:e2e
 
@@ -131,5 +140,10 @@ jobs:
         with: { node-version: "20", cache: "npm" }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      # Same rationale as the e2e job above: avoid a mid-run checkpoint stall on this
+      # disposable test database.
+      - run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d crisis_platform -c \
+            "ALTER SYSTEM SET checkpoint_timeout = '30min'; ALTER SYSTEM SET max_wal_size = '4GB'; SELECT pg_reload_conf();"
       - run: npm run db:migrate
       - run: npm run test:performance
