@@ -222,39 +222,52 @@ Vercel: una vez al día).
 
 ## 6. Eliminación de cuenta
 
-**Lo que existe:** `DELETE /api/v1/me` (`app/api/v1/me/route.ts`) inserta
-una fila en `dataRequests` con `kind: "deletion"`, registra un evento de
-auditoría (`account.request_deletion`) y cierra la sesión del usuario
-(`destroyCurrentSession`, que marca la sesión como `REVOKED` en la tabla
-`sessions` y borra las cookies). El botón "Solicitar eliminación de cuenta"
-en `/privacy` (`components/privacy/DataActions.tsx`) llama a este endpoint
-tras una confirmación del navegador y redirige a `/login`.
+`DELETE /api/v1/me` (`app/api/v1/me/route.ts`) inserta una fila en
+`dataRequests` con `kind: "deletion"`, encola el job
+`account.process_deletion` (`lib/jobs/handlers/account-deletion.ts`),
+registra un evento de auditoría (`account.request_deletion`) y cierra la
+sesión del usuario (`destroyCurrentSession`). El botón "Solicitar
+eliminación de cuenta" en `/privacy`
+(`components/privacy/DataActions.tsx`) llama a este endpoint tras una
+confirmación del navegador y redirige a `/login`. Igual que
+`suspendUser`/`blockUser`/`deleteUser` en el panel de administración, el
+endpoint llama primero a `assertNotLastSuperAdmin(userId)` — un
+super administrador no puede autoeliminarse si es el único que queda.
 
-**Lo que NO existe, honestamente:** a diferencia de la exportación, la
-solicitud de eliminación **no encola ningún job**. No hay ningún handler
-registrado (`registerJobHandler`) que consuma filas de `dataRequests` con
-`kind: "deletion"` — a día de hoy la fila queda permanentemente en estado
-`"PENDING"`. La cuenta del usuario no se marca como `DELETED`, su perfil no
-se anonimiza y sus conversaciones/mensajes no se tocan; lo único que ocurre
-de forma automática es el cierre de sesión. En la práctica, completar una
-solicitud de eliminación de cuenta requiere una acción manual de un
-administrador usando `deleteUser(userId, actorId)`
-(`lib/admin/users-service.ts`, línea 92), que sí hace un borrado lógico
-real: `UPDATE users SET status = 'DELETED', deletedAt = now()` más un
-evento de auditoría (`user.delete`) — pero esa función no está conectada
-automáticamente a las solicitudes de `dataRequests.kind = "deletion"`; es
-una operación administrativa independiente (borrado de un usuario desde el
-panel de administración) que no procesa la cola de solicitudes de
-eliminación de los propios usuarios. Tampoco existe una purga en cascada de
-conversaciones/mensajes/archivos específica para eliminación de cuenta más
-allá del `onDelete: "cascade"` declarado en las foreign keys del esquema
-(que solo actuaría si la fila `users` se borrara físicamente, cosa que
-`deleteUser` tampoco hace — es un borrado lógico, no un `DELETE` de SQL).
+El job `account.process_deletion`, con `JOB_PROVIDER=sync` (el valor por
+defecto), corre de forma síncrona dentro de la misma petición — para
+cuando `DELETE /api/v1/me` responde, la eliminación ya ocurrió:
 
-En resumen: la solicitud de eliminación de cuenta queda registrada y
-auditada, y cierra la sesión de inmediato, pero el procesamiento de fondo
-que debería completar la eliminación real de los datos no está
-implementado todavía.
+1. `users`: `status = 'DELETED'`, `deletedAt = now()`, y el correo se
+   sobrescribe con un valor anonimizado no recuperable
+   (`deleted-{userId}@deleted.invalid`) — a diferencia del borrado lógico
+   que hace `deleteUser` desde el panel de administración (que no toca el
+   correo ni el perfil), esta ruta es una eliminación real solicitada por
+   el propio usuario, así que sí borra el dato identificable.
+2. `userProfiles`: `displayName` y `avatarUrl` se ponen a `NULL`.
+3. Todas las sesiones `ACTIVE` del usuario se marcan `REVOKED` (no solo la
+   sesión actual).
+4. Todas las conversaciones del usuario que no estuvieran ya `DELETED` se
+   marcan `status = 'DELETED'`, `deletedAt = now()` — el mismo borrado
+   lógico que `deleteConversation`, por lo que el job `retention_cleanup`
+   (sección 5b) purga su contenido (`messages`) en la ventana normal de 90
+   días, sin duplicar esa lógica aquí.
+5. Los `uploadedFiles`/`generatedFiles` del usuario que no estuvieran ya
+   borrados reciben `expiresAt = now()`, así que el job
+   `cleanup_expired_files` (sección 5c) borra el blob subyacente en su
+   siguiente ejecución, también sin duplicar esa lógica.
+6. La fila de `dataRequests` se marca `status = 'COMPLETED'`,
+   `completedAt = now()`.
+7. Se registra un evento de auditoría `account.deletion_completed`
+   (`resourceId` es el `userId`, sin PII en `metadata`).
+
+La cuenta no se borra físicamente (`DELETE` de SQL) de `users` — se
+anonimiza y marca `DELETED`, igual que el resto de las tablas del sistema
+tratan el "borrado" como lógico primero y purga real (cuando aplica) como
+un paso posterior vía cron. Esto es deliberado: `users.id` sigue siendo
+referenciado por auditoría, `sessions` y (hasta que `retention_cleanup`
+las purgue) `conversations`/`messages`, y un `DELETE` físico de `users`
+rompería esas referencias antes de que la ventana de retención expire.
 
 ## 7. Acceso excepcional de administradores a contenido (§30) — minimización de datos
 

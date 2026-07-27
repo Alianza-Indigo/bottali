@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { test, expect, type Page } from "@playwright/test";
 import { db } from "@/lib/db/client";
-import { sessions, userRoles, users } from "@/db/schema";
+import { legalAcceptances, legalDocuments, sessions, userRoles, users } from "@/db/schema";
 import { hashPassword } from "@/lib/auth/password";
 import { getRoleIdsByKeys } from "@/lib/permissions/rbac";
 import { activateToolForUser } from "@/lib/tools/access";
@@ -61,6 +61,27 @@ test.describe("Control de acceso: escalamiento de privilegios y sesiones", () =>
     expect(roles).toHaveLength(1);
 
     await db.delete(userRoles).where(eq(userRoles.userId, user!.id));
+    await db.delete(users).where(eq(users.id, user!.id));
+  });
+
+  test("registrarse con acceptedPrivacyPolicy registra una fila real en legal_acceptances", async ({ page }) => {
+    const email = `e2e-legal-accept-${randomUUID()}@test.local`;
+    const res = await page.request.post("/api/v1/auth/register", {
+      data: { email, password: "ValidPassword!123", displayName: "Acepta política", acceptedPrivacyPolicy: true },
+    });
+    expect(res.status()).toBe(201);
+
+    const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    expect(user).toBeTruthy();
+
+    const [policy] = await db.select({ id: legalDocuments.id }).from(legalDocuments).where(eq(legalDocuments.kind, "privacy_policy")).limit(1);
+    expect(policy).toBeTruthy();
+
+    const [acceptance] = await db.select().from(legalAcceptances).where(eq(legalAcceptances.userId, user!.id)).limit(1);
+    expect(acceptance).toBeTruthy();
+    expect(acceptance!.legalDocumentId).toBe(policy!.id);
+
+    await db.delete(legalAcceptances).where(eq(legalAcceptances.userId, user!.id));
     await db.delete(users).where(eq(users.id, user!.id));
   });
 

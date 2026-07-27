@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { userProfiles, userRoles, users } from "@/db/schema";
+import { legalAcceptances, legalDocuments, userProfiles, userRoles, users } from "@/db/schema";
 import { registerSchema } from "@/lib/validation/auth";
 import { parseJsonBody, handleApiError } from "@/lib/validation/http";
 import { hashPassword, evaluatePasswordStrength } from "@/lib/auth/password";
@@ -59,6 +59,19 @@ export async function POST(request: Request) {
       const userRoleId = roleMap.get("USER");
       if (userRoleId) {
         await tx.insert(userRoles).values({ userId: user.id, roleId: userRoleId });
+      }
+
+      // registerSchema already requires acceptedPrivacyPolicy: true (validated above), but
+      // that alone was never recorded anywhere — legalAcceptances existed in the schema
+      // with no writer. Record it against whichever privacy_policy is published right now,
+      // so a later policy version bump is distinguishable from what this user actually saw.
+      const [currentPolicy] = await tx
+        .select({ id: legalDocuments.id })
+        .from(legalDocuments)
+        .where(eq(legalDocuments.kind, "privacy_policy"))
+        .limit(1);
+      if (currentPolicy) {
+        await tx.insert(legalAcceptances).values({ userId: user.id, legalDocumentId: currentPolicy.id });
       }
 
       return user.id;

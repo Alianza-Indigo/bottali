@@ -6,4 +6,5 @@ import "./retention";
 import "./files";
 import "./knowledge";
 import "./export";
+import "./account-deletion";
 import "./tool-confirmations";

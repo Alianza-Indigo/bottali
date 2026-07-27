@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import "@/lib/jobs/handlers";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
@@ -8,6 +9,8 @@ import { destroyCurrentSession } from "@/lib/auth/session";
 import { parseJsonBody, handleApiError } from "@/lib/validation/http";
 import { recordAuditEvent } from "@/lib/audit/log";
 import { dataRequests } from "@/db/schema";
+import { getJobProvider } from "@/lib/jobs";
+import { assertNotLastSuperAdmin } from "@/lib/permissions/rbac";
 
 const patchSchema = z.object({
   displayName: z.string().min(1).max(120).optional(),
@@ -45,8 +48,26 @@ export async function PATCH(request: Request) {
 export async function DELETE() {
   try {
     const user = await requireCurrentUser();
-    await db.insert(dataRequests).values({ userId: user.id, kind: "deletion" });
-    await recordAuditEvent({ actorId: user.id, action: "account.request_deletion", resourceType: "user", resourceId: user.id });
+    // Same safety check the admin deleteUser() path enforces — self-service deletion must
+    // not be able to lock the platform out of its last remaining super admin either.
+    await assertNotLastSuperAdmin(user.id);
+
+    const [request] = await db.insert(dataRequests).values({ userId: user.id, kind: "deletion" }).returning({ id: dataRequests.id });
+    if (!request) throw new Error("No fue posible registrar la solicitud de eliminación.");
+
+    const job = await getJobProvider().enqueue(
+      "account.process_deletion",
+      { requestId: request.id, userId: user.id },
+      { idempotencyKey: `deletion:${request.id}` },
+    );
+
+    await recordAuditEvent({
+      actorId: user.id,
+      action: "account.request_deletion",
+      resourceType: "user",
+      resourceId: user.id,
+      metadata: { jobId: job.id },
+    });
     await destroyCurrentSession();
     return NextResponse.json({ message: "Solicitud de eliminación de cuenta registrada." });
   } catch (error) {
