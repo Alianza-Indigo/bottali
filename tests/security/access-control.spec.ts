@@ -64,55 +64,48 @@ test.describe("Control de acceso: escalamiento de privilegios y sesiones", () =>
     await db.delete(users).where(eq(users.id, user!.id));
   });
 
-  test("revocar las sesiones de un usuario invalida de inmediato su cookie de sesión activa", async ({ browser }) => {
-    // try/finally: contexts opened directly off `browser` (not the default per-test
-    // `context`/`page` fixtures) are NOT auto-closed by the test runner — they'd otherwise
-    // leak for the rest of this worker's lifetime if an expect() above threw first,
-    // degrading every later test in a long full-suite run.
-    const context = await browser.newContext();
+  test("revocar las sesiones de un usuario invalida de inmediato su cookie de sesión activa", async ({ page, browser }) => {
+    // Only ONE extra browser context (for the admin identity) — the default `page`/`context`
+    // fixture already gives the test a real, auto-cleaned-up browser context for the user
+    // login, so there's no need for a second manually-managed one on top of it. Opening two
+    // extra contexts here (instead of one) was previously found to degrade every later
+    // page-based test for the rest of a long full-suite run.
+    await loginAs(page, DEMO_CREDENTIALS.user.email, DEMO_CREDENTIALS.user.password);
+    expect((await page.request.get("/api/v1/me")).status()).toBe(200);
+
+    const [demoUser] = await db.select({ id: users.id }).from(users).where(eq(users.email, DEMO_CREDENTIALS.user.email)).limit(1);
     const adminContext = await browser.newContext();
     try {
-      const page = await context.newPage();
-      await loginAs(page, DEMO_CREDENTIALS.user.email, DEMO_CREDENTIALS.user.password);
-
-      expect((await page.request.get("/api/v1/me")).status()).toBe(200);
-
-      const [demoUser] = await db.select({ id: users.id }).from(users).where(eq(users.email, DEMO_CREDENTIALS.user.email)).limit(1);
       const adminPage = await adminContext.newPage();
       await loginAs(adminPage, DEMO_CREDENTIALS.superAdmin.email, DEMO_CREDENTIALS.superAdmin.password);
       const revokeRes = await adminPage.request.post(`/api/v1/admin/users/${demoUser!.id}/sessions/revoke`, {
         headers: await csrfHeaders(adminPage),
       });
       expect(revokeRes.status()).toBe(200);
-
-      // Same browser context (same cookies) as the original login — the session row is now
-      // REVOKED server-side, so the still-valid-looking cookie must no longer authenticate.
-      expect((await page.request.get("/api/v1/me")).status()).toBe(401);
     } finally {
-      await context.close();
       await adminContext.close();
     }
+
+    // Same browser context (same cookies) as the original login — the session row is now
+    // REVOKED server-side, so the still-valid-looking cookie must no longer authenticate.
+    expect((await page.request.get("/api/v1/me")).status()).toBe(401);
   });
 
-  test("una sesión cuyo expires_at ya pasó deja de autenticar aunque la cookie siga presente", async ({ browser }) => {
-    const context = await browser.newContext();
-    try {
-      const page = await context.newPage();
-      await loginAs(page, DEMO_CREDENTIALS.user.email, DEMO_CREDENTIALS.user.password);
-      expect((await page.request.get("/api/v1/me")).status()).toBe(200);
+  test("una sesión cuyo expires_at ya pasó deja de autenticar aunque la cookie siga presente", async ({ page }) => {
+    // Default `page` fixture is enough here — no second identity involved, so no reason to
+    // open (and have to remember to close) an extra browser context for this one.
+    await loginAs(page, DEMO_CREDENTIALS.user.email, DEMO_CREDENTIALS.user.password);
+    expect((await page.request.get("/api/v1/me")).status()).toBe(200);
 
-      const [demoUser] = await db.select({ id: users.id }).from(users).where(eq(users.email, DEMO_CREDENTIALS.user.email)).limit(1);
-      // Directly backdate the real session row rather than waiting out SESSION_TTL_SECONDS —
-      // same effect (getCurrentSession()'s expiresAt check), verifiable in test time.
-      await db
-        .update(sessions)
-        .set({ expiresAt: new Date(Date.now() - 60_000) })
-        .where(eq(sessions.userId, demoUser!.id));
+    const [demoUser] = await db.select({ id: users.id }).from(users).where(eq(users.email, DEMO_CREDENTIALS.user.email)).limit(1);
+    // Directly backdate the real session row rather than waiting out SESSION_TTL_SECONDS —
+    // same effect (getCurrentSession()'s expiresAt check), verifiable in test time.
+    await db
+      .update(sessions)
+      .set({ expiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(sessions.userId, demoUser!.id));
 
-      expect((await page.request.get("/api/v1/me")).status()).toBe(401);
-    } finally {
-      await context.close();
-    }
+    expect((await page.request.get("/api/v1/me")).status()).toBe(401);
   });
 
   test("un rol administrativo sin 'conversations.content.read' no puede leer contenido de conversaciones (§30)", async ({ page }) => {

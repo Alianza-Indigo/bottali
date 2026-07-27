@@ -69,6 +69,12 @@ const envSchema = z.object({
   JOB_SECRET: z.string().optional(),
   CRON_SECRET: z.string().optional(),
 
+  // Real anti-brute-force control in production (20/15min per IP is deliberately tight for
+  // a real user). A full e2e/security Playwright run performs far more logins than any real
+  // user would in that window, and every request in a single CI job shares one IP — so this
+  // is configurable rather than hardcoded, letting CI raise it without weakening production.
+  LOGIN_RATE_LIMIT_MAX: numberFromString(20),
+
   ENABLE_VOICE: boolFromString,
   ENABLE_FILES: boolFromString,
   ENABLE_PWA: boolFromString,

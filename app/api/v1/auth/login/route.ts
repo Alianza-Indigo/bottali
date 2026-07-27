@@ -7,6 +7,7 @@ import { parseJsonBody, handleApiError } from "@/lib/validation/http";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession, getRequestMetadata, isMfaEnabled } from "@/lib/auth/session";
 import { getRateLimiter } from "@/lib/security/rate-limit";
+import { getEnv } from "@/lib/env";
 import { recordAuditEvent, recordSecurityEvent } from "@/lib/audit/log";
 import { AppError, RateLimitError } from "@/lib/utils/errors";
 
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
   try {
     const { ipTruncated } = await getRequestMetadata();
     const limiter = getRateLimiter();
-    const rl = await limiter.consume(`login:${ipTruncated ?? "unknown"}`, 20, 60 * 15);
+    const rl = await limiter.consume(`login:${ipTruncated ?? "unknown"}`, getEnv().LOGIN_RATE_LIMIT_MAX, 60 * 15);
     if (!rl.allowed) throw new RateLimitError();
 
     const body = await parseJsonBody(request, loginSchema);

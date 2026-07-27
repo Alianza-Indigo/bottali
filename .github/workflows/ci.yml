@@ -30,6 +30,10 @@ env:
   ENABLE_FILES: "true"
   ENABLE_PWA: "true"
   ENABLE_ANALYTICS: "true"
+  # Production keeps the tight default (20/15min/IP, see lib/env.ts). A full Playwright
+  # suite performs far more logins than that from the single shared runner IP within one
+  # non-resetting window, so CI alone raises the ceiling rather than weakening the real control.
+  LOGIN_RATE_LIMIT_MAX: "1000"
 
 jobs:
   lint-typecheck:
