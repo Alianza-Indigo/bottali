@@ -113,7 +113,7 @@ export default async function AdminOverviewPage() {
     const fallbackRoutes: Array<[PermissionKey, string]> = [
       ["tools.read", "/admin/tools"],
       ["users.read", "/admin/users"],
-      ["knowledge.read", "/admin/knowledge"],
+      ["knowledge.read", "/admin/tools"],
       ["providers.read", "/admin/providers"],
       ["audit.read", "/admin/audit"],
       ["security.read", "/admin/security"],

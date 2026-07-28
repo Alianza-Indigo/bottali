@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { knowledgeBases, knowledgeChunks, knowledgeDocuments, knowledgeDocumentVersions } from "@/db/schema";
+import { knowledgeBases, knowledgeChunks, knowledgeDocuments, knowledgeDocumentVersions, tools } from "@/db/schema";
 import { getStorageAdapter } from "@/lib/storage";
 import { getEnv } from "@/lib/env";
 import { ALLOWED_KNOWLEDGE_MIME_TYPES, sniffMimeType } from "@/lib/files/validate";
@@ -11,6 +11,18 @@ import { ForbiddenError, NotFoundError, ValidationError } from "@/lib/utils/erro
 import { recordAuditEvent } from "@/lib/audit/log";
 
 export async function createKnowledgeBase(toolId: string | null, name: string, description: string | undefined, actorId: string) {
+  if (toolId) {
+    const [tool, existing] = await Promise.all([
+      db.select({ id: tools.id }).from(tools).where(eq(tools.id, toolId)).limit(1),
+      db
+        .select({ id: knowledgeBases.id })
+        .from(knowledgeBases)
+        .where(and(eq(knowledgeBases.toolId, toolId), isNull(knowledgeBases.deletedAt)))
+        .limit(1),
+    ]);
+    if (!tool[0]) throw new NotFoundError("Herramienta no encontrada.");
+    if (existing[0]) throw new ValidationError("Esta herramienta ya tiene una base de conocimiento.");
+  }
   const [kb] = await db.insert(knowledgeBases).values({ toolId, name, description, createdBy: actorId }).returning();
   if (!kb) throw new Error("No fue posible crear la base de conocimiento.");
   await recordAuditEvent({ actorId, action: "knowledge_base.create", resourceType: "knowledge_base", resourceId: kb.id });

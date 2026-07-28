@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { knowledgeBases } from "@/db/schema";
 import { retrieveRelevantChunks } from "@/lib/knowledge/retrieval";
@@ -148,7 +148,17 @@ export const INTERNAL_TOOLS: Record<string, ToolDefinition<unknown>> = {
       if (!context.toolId) {
         return { success: false, error: "Esta herramienta interna requiere una herramienta conversacional activa." };
       }
-      const kbRows = await db.select({ id: knowledgeBases.id }).from(knowledgeBases).where(eq(knowledgeBases.toolId, context.toolId)).limit(1);
+      const kbRows = await db
+        .select({ id: knowledgeBases.id })
+        .from(knowledgeBases)
+        .where(
+          and(
+            eq(knowledgeBases.toolId, context.toolId),
+            isNull(knowledgeBases.disabledAt),
+            isNull(knowledgeBases.deletedAt),
+          ),
+        )
+        .limit(1);
       if (!kbRows[0]) {
         return { success: true, output: { chunks: [] } };
       }

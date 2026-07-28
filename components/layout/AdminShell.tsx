@@ -7,7 +7,6 @@ import {
   Activity,
   BarChart3,
   Bell,
-  BookOpen,
   Bot,
   Boxes,
   BriefcaseBusiness,
@@ -39,7 +38,6 @@ const PRIMARY_NAV: NavItem[] = [
   { href: "/admin/tools", label: "Herramientas", icon: Bot },
   { href: "/admin/users", label: "Usuarios", icon: Users },
   { href: "/admin/groups", label: "Grupos", icon: Boxes },
-  { href: "/admin/knowledge", label: "Conocimiento", icon: BookOpen },
   { href: "/admin/conversations", label: "Conversaciones", icon: MessageSquare },
   { href: "/admin/analytics", label: "Analítica", icon: BarChart3 },
 ];

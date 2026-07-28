@@ -9,6 +9,7 @@ import { IdentitySection } from "./sections/IdentitySection";
 import { BehaviorSection } from "./sections/BehaviorSection";
 import { ModelsSection } from "./sections/ModelsSection";
 import { CapabilitiesSection } from "./sections/CapabilitiesSection";
+import { KnowledgeSection } from "./sections/KnowledgeSection";
 import { AccessSection } from "./sections/AccessSection";
 import { SafetySection } from "./sections/SafetySection";
 import { PwaSection } from "./sections/PwaSection";
@@ -23,11 +24,14 @@ export interface ToolBuilderProps {
   config: FullVersionConfig;
   versions: Array<{ id: string; versionNumber: number; status: string }>;
   providers: Array<{ id: string; name: string; kind: string }>;
+  knowledgeBase: { id: string; name: string; description: string | null; disabled: boolean } | null;
+  knowledgeDocuments: Array<{ id: string; name: string; status: string; sizeBytes: number }>;
 }
 
 const TABS = [
   { key: "identity", label: "Identidad" },
   { key: "behavior", label: "Comportamiento" },
+  { key: "knowledge", label: "Conocimiento" },
   { key: "models", label: "Modelo" },
   { key: "capabilities", label: "Capacidades" },
   { key: "access", label: "Acceso" },
@@ -37,7 +41,16 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
-export function ToolBuilder({ tool, versionId, versionStatus, config, versions, providers }: ToolBuilderProps) {
+export function ToolBuilder({
+  tool,
+  versionId,
+  versionStatus,
+  config,
+  versions,
+  providers,
+  knowledgeBase,
+  knowledgeDocuments,
+}: ToolBuilderProps) {
   const [tab, setTab] = useState<TabKey>("identity");
   const visibleStatus = getVisibleToolStatus(tool.status);
 
@@ -61,6 +74,16 @@ export function ToolBuilder({ tool, versionId, versionStatus, config, versions, 
           <div className="p-4 sm:p-5">
             {tab === "identity" && <IdentitySection toolId={tool.id} versionId={versionId} initial={config.branding} />}
             {tab === "behavior" && <BehaviorSection toolId={tool.id} versionId={versionId} initial={config.behavior} />}
+            {tab === "knowledge" && (
+              <KnowledgeSection
+                toolId={tool.id}
+                toolName={config.branding?.name ?? tool.slug}
+                ragEnabled={Boolean(config.capabilities?.rag)}
+                knowledgeBase={knowledgeBase}
+                documents={knowledgeDocuments}
+                onOpenCapabilities={() => setTab("capabilities")}
+              />
+            )}
             {tab === "models" && <ModelsSection toolId={tool.id} versionId={versionId} initial={config.models} providers={providers} />}
             {tab === "capabilities" && <CapabilitiesSection toolId={tool.id} versionId={versionId} initial={config.capabilities} />}
             {tab === "access" && <AccessSection toolId={tool.id} versionId={versionId} initial={config.accessRules} />}

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { conversations, knowledgeBases, messages, notifications, providerModels, toolCallConfirmations, tools } from "@/db/schema";
 import type { FullVersionConfig } from "@/lib/tools/repository";
@@ -528,7 +528,17 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
 
   let knowledgeBlock: string | null = null;
   if (config.capabilities?.rag) {
-    const kbRows = await db.select({ id: knowledgeBases.id }).from(knowledgeBases).where(eq(knowledgeBases.toolId, tool.id)).limit(1);
+    const kbRows = await db
+      .select({ id: knowledgeBases.id })
+      .from(knowledgeBases)
+      .where(
+        and(
+          eq(knowledgeBases.toolId, tool.id),
+          isNull(knowledgeBases.disabledAt),
+          isNull(knowledgeBases.deletedAt),
+        ),
+      )
+      .limit(1);
     if (kbRows[0]) {
       const chunks = await retrieveRelevantChunks(kbRows[0].id, userMessageContent);
       knowledgeBlock = buildKnowledgeContextBlock(chunks);

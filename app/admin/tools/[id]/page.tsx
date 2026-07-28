@@ -1,8 +1,11 @@
 import { notFound } from "next/navigation";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { ensureEditableDraftVersion } from "@/lib/tools/service";
 import { getAdminToolBuilderData, loadVersionConfig } from "@/lib/tools/repository";
 import { requireCurrentUser } from "@/lib/auth/current-user";
 import { ToolBuilder } from "@/components/admin/tools/ToolBuilder";
+import { db } from "@/lib/db/client";
+import { knowledgeBases, knowledgeDocuments } from "@/db/schema";
 
 export default async function AdminToolDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -17,6 +20,24 @@ export default async function AdminToolDetailPage({ params }: { params: Promise<
   const activeVersion = versions.find((version) => version.id === draftVersionId);
   if (!activeVersion) notFound();
 
+  const knowledgeBaseRows = await db
+    .select()
+    .from(knowledgeBases)
+    .where(and(eq(knowledgeBases.toolId, id), isNull(knowledgeBases.deletedAt)))
+    .limit(1);
+  const knowledgeBase = knowledgeBaseRows[0] ?? null;
+  const documents = knowledgeBase
+    ? await db
+        .select({
+          id: knowledgeDocuments.id,
+          name: knowledgeDocuments.name,
+          status: knowledgeDocuments.status,
+          sizeBytes: knowledgeDocuments.sizeBytes,
+        })
+        .from(knowledgeDocuments)
+        .where(and(eq(knowledgeDocuments.knowledgeBaseId, knowledgeBase.id), ne(knowledgeDocuments.status, "DELETED")))
+    : [];
+
   return (
     <ToolBuilder
       tool={{ id: tool.id, slug: tool.slug, status: tool.status, publishedVersionId: tool.publishedVersionId }}
@@ -25,6 +46,17 @@ export default async function AdminToolDetailPage({ params }: { params: Promise<
       config={config}
       versions={versions.map((v) => ({ id: v.id, versionNumber: v.versionNumber, status: v.status }))}
       providers={modelProviders.map((p) => ({ id: p.id, name: p.name, kind: p.kind }))}
+      knowledgeBase={
+        knowledgeBase
+          ? {
+              id: knowledgeBase.id,
+              name: knowledgeBase.name,
+              description: knowledgeBase.description,
+              disabled: Boolean(knowledgeBase.disabledAt),
+            }
+          : null
+      }
+      knowledgeDocuments={documents}
     />
   );
 }
