@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiPost, ApiError } from "@/lib/api/client";
-import { Card, CardBody } from "@/components/ui/Card";
 import { Label } from "@/components/ui/Label";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
@@ -33,22 +32,20 @@ export function CreateSuiteForm({ tools }: { tools: Array<{ id: string; slug: st
   };
 
   return (
-    <Card>
-      <CardBody>
-        <form onSubmit={onSubmit} className="flex flex-wrap items-end gap-3">
+        <form onSubmit={onSubmit} className="grid gap-3 md:grid-cols-2 xl:grid-cols-[220px_1fr_auto_auto] xl:items-end">
           {error && (
             <div className="w-full">
               <Alert tone="danger">{error}</Alert>
             </div>
           )}
-          <div>
+          <div className="min-w-0">
             <Label htmlFor="suite-tool">Herramienta</Label>
             <select
               id="suite-tool"
               value={toolId}
               onChange={(e) => setToolId(e.target.value)}
               required
-              className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink"
+              className="h-10 w-full rounded-md border border-border bg-surface px-3 text-sm text-ink"
             >
               <option value="">Selecciona...</option>
               {tools.map((tool) => (
@@ -58,11 +55,11 @@ export function CreateSuiteForm({ tools }: { tools: Array<{ id: string; slug: st
               ))}
             </select>
           </div>
-          <div>
+          <div className="min-w-0">
             <Label htmlFor="suite-name">Nombre de la suite</Label>
             <Input id="suite-name" value={name} onChange={(e) => setName(e.target.value)} required />
           </div>
-          <label className="flex items-center gap-2 pb-2 text-sm text-ink">
+          <label className="flex min-h-10 items-center gap-2 text-sm text-ink">
             <input type="checkbox" checked={mandatory} onChange={(e) => setMandatory(e.target.checked)} className="h-4 w-4 rounded border-border-strong" />
             Obligatoria para publicar
           </label>
@@ -70,7 +67,5 @@ export function CreateSuiteForm({ tools }: { tools: Array<{ id: string; slug: st
             Crear suite
           </Button>
         </form>
-      </CardBody>
-    </Card>
   );
 }

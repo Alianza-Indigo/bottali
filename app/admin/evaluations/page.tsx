@@ -1,10 +1,11 @@
 import Link from "next/link";
+import { FlaskConical } from "lucide-react";
 import { db } from "@/lib/db/client";
 import { evaluationSuites, tools } from "@/db/schema";
-import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CreateSuiteForm } from "@/components/admin/evaluations/CreateSuiteForm";
+import { AdminPageHeader, AdminPanel } from "@/components/admin/AdminPage";
 
 export const metadata = { title: "Evaluaciones — Admin" };
 
@@ -14,16 +15,22 @@ export default async function AdminEvaluationsPage() {
   const suitesWithTool = suites.map((suite) => ({ ...suite, toolSlug: toolRows.find((t) => t.id === suite.toolId)?.slug ?? suite.toolId }));
 
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold text-ink">Suites de evaluación</h1>
-      <CreateSuiteForm tools={toolRows} />
+    <div className="flex flex-col gap-6">
+      <AdminPageHeader
+        icon={FlaskConical}
+        title="Evaluaciones"
+        description="Valida la calidad de cada herramienta con casos repetibles antes de publicarla."
+      />
+      <AdminPanel title="Nueva suite" description="Agrupa casos de prueba para una herramienta.">
+        <CreateSuiteForm tools={toolRows} />
+      </AdminPanel>
       {suitesWithTool.length === 0 ? (
         <EmptyState title="No hay suites de evaluación todavía" />
       ) : (
-        <Card>
+        <AdminPanel title={`${suitesWithTool.length} suites`} contentClassName="">
           <ul className="divide-y divide-border">
             {suitesWithTool.map((suite) => (
-              <li key={suite.id} className="flex items-center justify-between px-5 py-3">
+              <li key={suite.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <div>
                   <Link href={`/admin/evaluations/${suite.id}`} className="text-sm font-medium text-ink hover:underline">
                     {suite.name}
@@ -34,7 +41,7 @@ export default async function AdminEvaluationsPage() {
               </li>
             ))}
           </ul>
-        </Card>
+        </AdminPanel>
       )}
     </div>
   );

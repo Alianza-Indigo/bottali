@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiPost, ApiError } from "@/lib/api/client";
-import { Card, CardBody } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
@@ -30,9 +29,8 @@ export function CreateKnowledgeBaseForm() {
   };
 
   return (
-    <Card>
-      <CardBody>
-        <form onSubmit={onSubmit} className="flex items-end gap-2">
+      <div>
+        <form onSubmit={onSubmit} className="flex flex-col gap-2 sm:flex-row sm:items-end">
           <div className="flex-1">
             <label htmlFor="kb-name" className="sr-only">
               Nombre de la base de conocimiento
@@ -48,7 +46,6 @@ export function CreateKnowledgeBaseForm() {
             <Alert tone="danger">{error}</Alert>
           </div>
         )}
-      </CardBody>
-    </Card>
+      </div>
   );
 }

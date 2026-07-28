@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
+import { FlaskConical } from "lucide-react";
 import { db } from "@/lib/db/client";
 import { evaluationCases, evaluationRuns, evaluationSuites, tools } from "@/db/schema";
-import { Card, CardBody } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { AddCaseForm } from "@/components/admin/evaluations/AddCaseForm";
 import { RunSuiteButton } from "@/components/admin/evaluations/RunSuiteButton";
+import { AdminPageHeader, AdminPanel } from "@/components/admin/AdminPage";
 
 export default async function EvaluationSuiteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -20,14 +21,15 @@ export default async function EvaluationSuiteDetailPage({ params }: { params: Pr
   const toolVersionId = tool?.draftVersionId ?? tool?.publishedVersionId ?? null;
 
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold text-ink">{suite.name}</h1>
-      {suite.description && <p className="text-sm text-ink-muted">{suite.description}</p>}
+    <div className="flex flex-col gap-6">
+      <AdminPageHeader
+        icon={FlaskConical}
+        title={suite.name}
+        description={suite.description ?? "Casos y ejecuciones de esta suite de evaluación."}
+      />
 
-      <Card>
-        <CardBody>
-          <h2 className="mb-2 text-sm font-semibold text-ink-muted uppercase tracking-wide">Casos</h2>
-          <ul className="flex flex-col gap-2">
+      <AdminPanel title={`Casos (${cases.length})`} description="Entradas utilizadas para validar el comportamiento esperado.">
+          <ul className="mb-4 flex flex-col gap-2">
             {cases.map((c) => (
               <li key={c.id} className="rounded-md bg-surface-subtle p-2 text-sm text-ink">
                 {c.input}
@@ -35,15 +37,13 @@ export default async function EvaluationSuiteDetailPage({ params }: { params: Pr
             ))}
             {cases.length === 0 && <li className="text-sm text-ink-faint">Sin casos todavía.</li>}
           </ul>
-          <div className="mt-3">
+          <div className="border-t border-border pt-4">
             <AddCaseForm suiteId={id} />
           </div>
-        </CardBody>
-      </Card>
+      </AdminPanel>
 
-      <Card>
-        <CardBody className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-ink-muted uppercase tracking-wide">Ejecuciones</h2>
+      <AdminPanel title={`Ejecuciones (${runs.length})`} description="Resultados históricos de la suite contra versiones de la herramienta.">
+        <div className="flex flex-col gap-3">
           {toolVersionId ? (
             <RunSuiteButton suiteId={id} toolVersionId={toolVersionId} />
           ) : (
@@ -61,8 +61,8 @@ export default async function EvaluationSuiteDetailPage({ params }: { params: Pr
             ))}
             {runs.length === 0 && <li className="text-sm text-ink-faint">Sin ejecuciones todavía.</li>}
           </ul>
-        </CardBody>
-      </Card>
+        </div>
+      </AdminPanel>
     </div>
   );
 }

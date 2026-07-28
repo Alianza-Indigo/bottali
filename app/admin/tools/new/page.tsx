@@ -4,15 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { Sparkles } from "lucide-react";
 import { createToolSchema, type CreateToolInput } from "@/lib/validation/tools";
 import { apiPost, ApiError } from "@/lib/api/client";
-import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Label } from "@/components/ui/Label";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { FieldError } from "@/components/ui/FieldError";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
+import { AdminPageHeader, AdminPanel } from "@/components/admin/AdminPage";
 
 export default function NewToolPage() {
   const router = useRouter();
@@ -34,12 +35,13 @@ export default function NewToolPage() {
   };
 
   return (
-    <div className="mx-auto max-w-xl">
-      <Card>
-        <CardHeader>
-          <h1 className="text-lg font-semibold text-ink">Crear herramienta</h1>
-        </CardHeader>
-        <CardBody>
+    <div className="flex flex-col gap-6">
+      <AdminPageHeader
+        icon={Sparkles}
+        title="Crear herramienta"
+        description="Define la identidad básica. Después podrás configurar comportamiento, modelo, acceso y seguridad."
+      />
+      <AdminPanel title="Información general" description="Estos datos identifican la herramienta dentro de la plataforma." className="max-w-3xl">
           <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-4">
             {serverError && <Alert tone="danger">{serverError}</Alert>}
             <div>
@@ -71,8 +73,7 @@ export default function NewToolPage() {
               Crear herramienta
             </Button>
           </form>
-        </CardBody>
-      </Card>
+      </AdminPanel>
     </div>
   );
 }

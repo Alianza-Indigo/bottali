@@ -24,6 +24,15 @@ const STATUS_TONE: Record<string, BadgeTone> = {
   DEAD_LETTER: "danger",
   CANCELLED: "neutral",
 };
+const STATUS_LABEL: Record<string, string> = {
+  COMPLETED: "Completado",
+  QUEUED: "En cola",
+  RUNNING: "En curso",
+  RETRYING: "Reintentando",
+  FAILED: "Fallido",
+  DEAD_LETTER: "Agotado",
+  CANCELLED: "Cancelado",
+};
 
 export function JobsList({ jobs }: { jobs: JobRow[] }) {
   const router = useRouter();
@@ -42,8 +51,8 @@ export function JobsList({ jobs }: { jobs: JobRow[] }) {
   return (
     <ul className="divide-y divide-border">
       {jobs.map((job) => (
-        <li key={job.id} className="flex items-center justify-between px-5 py-3">
-          <div>
+        <li key={job.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div className="min-w-0">
             <p className="text-sm text-ink">{job.type}</p>
             <p className="text-xs text-ink-faint">
               Intento {job.attempt}/{job.maxAttempts}
@@ -51,7 +60,7 @@ export function JobsList({ jobs }: { jobs: JobRow[] }) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Badge tone={STATUS_TONE[job.status] ?? "neutral"}>{job.status}</Badge>
+            <Badge tone={STATUS_TONE[job.status] ?? "neutral"}>{STATUS_LABEL[job.status] ?? job.status}</Badge>
             {(job.status === "FAILED" || job.status === "DEAD_LETTER" || job.status === "CANCELLED") && (
               <Button size="sm" variant="secondary" loading={busyId === job.id} onClick={() => retry(job.id)}>
                 Reintentar

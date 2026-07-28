@@ -62,12 +62,12 @@ export function UsersTable({ users }: { users: UserRow[] }) {
       )}
       <ul className="divide-y divide-border">
         {users.map((user) => (
-          <li key={user.id} className="flex items-center justify-between px-5 py-3">
-            <div>
+          <li key={user.id} className="flex flex-col gap-3 px-4 py-3 xl:flex-row xl:items-center xl:justify-between xl:px-5">
+            <div className="min-w-0">
               <p className="text-sm text-ink">{user.displayName ?? user.email}</p>
               <p className="text-xs text-ink-faint">{user.email}</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Badge tone={STATUS_TONE[user.status] ?? "neutral"}>{user.status}</Badge>
               {user.status === "ACTIVE" && (
                 <Button size="sm" variant="ghost" loading={busyId === `${user.id}:suspend`} onClick={() => act(user.id, "suspend")}>

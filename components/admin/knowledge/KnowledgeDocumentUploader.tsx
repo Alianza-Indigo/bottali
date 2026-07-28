@@ -44,7 +44,7 @@ export function KnowledgeDocumentUploader({ knowledgeBaseId }: { knowledgeBaseId
   return (
     <div className="flex flex-col gap-2">
       {error && <Alert tone="danger">{error}</Alert>}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <input
           ref={inputRef}
           type="file"
@@ -53,7 +53,7 @@ export function KnowledgeDocumentUploader({ knowledgeBaseId }: { knowledgeBaseId
             const file = e.target.files?.[0];
             if (file) onFileSelected(file);
           }}
-          className="text-sm text-ink-muted"
+          className="min-w-0 max-w-full text-sm text-ink-muted file:mr-3 file:rounded-md file:border-0 file:bg-surface-subtle file:px-3 file:py-2 file:text-sm file:font-medium file:text-ink"
         />
         {uploading && (
           <Button size="sm" loading disabled>

@@ -29,12 +29,12 @@ export function FeatureFlagsList({ flags: initial }: { flags: FlagRow[] }) {
   return (
     <ul className="divide-y divide-border">
       {flags.map((flag) => (
-        <li key={flag.key} className="flex items-center justify-between px-5 py-3">
-          <div>
+        <li key={flag.key} className="flex items-center justify-between gap-4 px-4 py-3 sm:px-5">
+          <div className="min-w-0">
             <p className="text-sm text-ink">{flag.key}</p>
             {flag.description && <p className="text-xs text-ink-faint">{flag.description}</p>}
           </div>
-          <label className="flex items-center gap-2 text-sm text-ink">
+          <label className="flex shrink-0 items-center gap-2 text-sm text-ink">
             <input
               type="checkbox"
               checked={flag.enabled}

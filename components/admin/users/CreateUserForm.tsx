@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiPost, ApiError } from "@/lib/api/client";
-import { Card, CardBody } from "@/components/ui/Card";
 import { Label } from "@/components/ui/Label";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
@@ -73,9 +72,8 @@ export function CreateUserForm() {
   };
 
   return (
-    <Card>
-      <CardBody className="flex flex-col gap-3">
-        <div className="flex gap-2">
+      <div className="flex flex-col gap-4">
+        <div className="inline-flex w-fit rounded-[8px] bg-surface-subtle p-1">
           <Button size="sm" variant={mode === "single" ? "primary" : "ghost"} onClick={() => setMode("single")}>
             Crear usuario
           </Button>
@@ -102,22 +100,22 @@ export function CreateUserForm() {
         )}
 
         {mode === "single" ? (
-          <form onSubmit={createSingle} className="flex flex-wrap items-end gap-3">
-            <div>
+          <form onSubmit={createSingle} className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.2fr_1fr_180px_auto] xl:items-end">
+            <div className="min-w-0">
               <Label htmlFor="new-user-email">Correo</Label>
               <Input id="new-user-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
             </div>
-            <div>
+            <div className="min-w-0">
               <Label htmlFor="new-user-name">Nombre</Label>
               <Input id="new-user-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
             </div>
-            <div>
+            <div className="min-w-0">
               <Label htmlFor="new-user-role">Rol</Label>
               <select
                 id="new-user-role"
                 value={roleKey}
                 onChange={(e) => setRoleKey(e.target.value)}
-                className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink"
+                className="h-10 w-full rounded-md border border-border bg-surface px-3 text-sm text-ink"
               >
                 {ROLE_KEYS.map((key) => (
                   <option key={key} value={key}>
@@ -126,7 +124,7 @@ export function CreateUserForm() {
                 ))}
               </select>
             </div>
-            <Button type="submit" loading={saving}>
+            <Button type="submit" loading={saving} className="w-full xl:w-auto">
               Crear
             </Button>
           </form>
@@ -146,7 +144,6 @@ export function CreateUserForm() {
             </Button>
           </form>
         )}
-      </CardBody>
-    </Card>
+      </div>
   );
 }

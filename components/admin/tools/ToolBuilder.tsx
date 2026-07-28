@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { FullVersionConfig } from "@/lib/tools/repository";
-import { Card } from "@/components/ui/Card";
+import { SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { IdentitySection } from "./sections/IdentitySection";
@@ -14,6 +14,7 @@ import { SafetySection } from "./sections/SafetySection";
 import { PwaSection } from "./sections/PwaSection";
 import { LifecyclePanel } from "./LifecyclePanel";
 import { getPublicationStatusTone, getVisibleToolStatus } from "@/lib/tools/presentation";
+import { AdminPageHeader, AdminPanel } from "@/components/admin/AdminPage";
 
 export interface ToolBuilderProps {
   tool: { id: string; slug: string; status: string; publishedVersionId: string | null };
@@ -41,21 +42,23 @@ export function ToolBuilder({ tool, versionId, versionStatus, config, versions, 
   const visibleStatus = getVisibleToolStatus(tool.status);
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
-      <div>
-        <div className="mb-4 flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-ink">{config.branding?.name ?? tool.slug}</h1>
-          <Badge tone={getPublicationStatusTone(visibleStatus)}>{visibleStatus}</Badge>
-        </div>
-        <Card>
-          <nav aria-label="Secciones de configuración" className="flex flex-wrap gap-1 border-b border-border p-2">
+    <div className="flex flex-col gap-6">
+      <AdminPageHeader
+        icon={SlidersHorizontal}
+        title={config.branding?.name ?? tool.slug}
+        description={`Configura la versión editable de ${tool.slug}.`}
+        actions={<Badge tone={getPublicationStatusTone(visibleStatus)}>{visibleStatus}</Badge>}
+      />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <AdminPanel contentClassName="">
+          <nav aria-label="Secciones de configuración" className="flex gap-1 overflow-x-auto border-b border-border p-2">
             {TABS.map((t) => (
               <Button key={t.key} size="sm" variant={tab === t.key ? "primary" : "ghost"} onClick={() => setTab(t.key)}>
                 {t.label}
               </Button>
             ))}
           </nav>
-          <div className="p-5">
+          <div className="p-4 sm:p-5">
             {tab === "identity" && <IdentitySection toolId={tool.id} versionId={versionId} initial={config.branding} />}
             {tab === "behavior" && <BehaviorSection toolId={tool.id} versionId={versionId} initial={config.behavior} />}
             {tab === "models" && <ModelsSection toolId={tool.id} versionId={versionId} initial={config.models} providers={providers} />}
@@ -64,9 +67,11 @@ export function ToolBuilder({ tool, versionId, versionStatus, config, versions, 
             {tab === "safety" && <SafetySection toolId={tool.id} versionId={versionId} initial={config.safetyPolicies} />}
             {tab === "pwa" && <PwaSection toolId={tool.id} versionId={versionId} initial={config.pwaConfig} />}
           </div>
-        </Card>
+        </AdminPanel>
+        <div className="min-w-0">
+          <LifecyclePanel toolId={tool.id} versionId={versionId} versionStatus={versionStatus} versions={versions} toolStatus={tool.status} />
+        </div>
       </div>
-      <LifecyclePanel toolId={tool.id} versionId={versionId} versionStatus={versionStatus} versions={versions} toolStatus={tool.status} />
     </div>
   );
 }

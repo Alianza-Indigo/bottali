@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import { apiPost, ApiError } from "@/lib/api/client";
-import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { Label } from "@/components/ui/Label";
 import { Alert } from "@/components/ui/Alert";
 import { FieldError } from "@/components/ui/FieldError";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { AdminPanel } from "@/components/admin/AdminPage";
 
 interface MinimalMessage {
   id: string;
@@ -34,14 +34,9 @@ export function ConversationContentViewer({ conversationId, canReadContent }: { 
 
   if (!canReadContent) {
     return (
-      <Card>
-        <CardHeader>
-          <h2 className="text-sm font-semibold text-ink">Contenido de los mensajes</h2>
-        </CardHeader>
-        <CardBody>
+      <AdminPanel title="Contenido de los mensajes">
           <Alert tone="info">No tienes el permiso &quot;conversations.content.read&quot; necesario para ver el contenido de esta conversación.</Alert>
-        </CardBody>
-      </Card>
+      </AdminPanel>
     );
   }
 
@@ -64,11 +59,8 @@ export function ConversationContentViewer({ conversationId, canReadContent }: { 
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-sm font-semibold text-ink">Contenido de los mensajes</h2>
-      </CardHeader>
-      <CardBody className="flex flex-col gap-3">
+    <AdminPanel title="Contenido de los mensajes" description="El acceso requiere justificación y queda registrado en auditoría.">
+      <div className="flex flex-col gap-3">
         <Alert tone="warning">
           Acceder al contenido de una conversación es una acción excepcional: requiere un motivo, queda registrada en la
           auditoría (§30) y solo debe usarse cuando sea estrictamente necesario (soporte, seguridad, cumplimiento legal).
@@ -105,7 +97,7 @@ export function ConversationContentViewer({ conversationId, canReadContent }: { 
             ))}
           </ul>
         )}
-      </CardBody>
-    </Card>
+      </div>
+    </AdminPanel>
   );
 }

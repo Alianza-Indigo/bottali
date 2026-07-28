@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, apiPost, ApiError } from "@/lib/api/client";
-import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import { AdminPanel } from "@/components/admin/AdminPage";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { Input } from "@/components/ui/Input";
@@ -108,24 +108,18 @@ export function LifecyclePanel({
 
   return (
     <div className="flex flex-col gap-4">
-      {(versionStatus === "DRAFT" || versionStatus === "TESTING") && <Card>
-        <CardHeader>
-          <h2 className="text-sm font-semibold text-ink">Probar</h2>
-        </CardHeader>
-        <CardBody className="flex flex-col gap-2">
+      {(versionStatus === "DRAFT" || versionStatus === "TESTING") && <AdminPanel title="Probar">
+        <div className="flex flex-col gap-2">
           <Textarea rows={2} value={testMessage} onChange={(e) => setTestMessage(e.target.value)} />
           <Button size="sm" loading={busy === "test"} onClick={runTest}>
             Enviar mensaje de prueba
           </Button>
           {testResult && <p className="rounded-md bg-surface-subtle p-2 text-xs text-ink">{testResult}</p>}
-        </CardBody>
-      </Card>}
+        </div>
+      </AdminPanel>}
 
-      <Card>
-        <CardHeader>
-          <h2 className="text-sm font-semibold text-ink">Ciclo de vida</h2>
-        </CardHeader>
-        <CardBody className="flex flex-col gap-2">
+      <AdminPanel title="Ciclo de vida">
+        <div className="flex flex-col gap-2">
           {error && <Alert tone="danger">{error}</Alert>}
           {validationErrors.length > 0 && (
             <Alert tone="warning">
@@ -203,16 +197,13 @@ export function LifecyclePanel({
           >
             Archivar
           </Button>}
-        </CardBody>
-      </Card>
+        </div>
+      </AdminPanel>
 
-      <Card>
-        <CardHeader>
-          <h2 className="text-sm font-semibold text-ink">Versiones</h2>
-        </CardHeader>
-        <CardBody className="flex flex-col gap-2">
+      <AdminPanel title="Versiones">
+        <div className="flex flex-col gap-2">
           <p className="text-xs text-ink-faint">Selecciona dos versiones para comparar su configuración.</p>
-          {versions
+          {[...versions]
             .sort((a, b) => b.versionNumber - a.versionNumber)
             .map((v) => {
               const visibleStatus = getVisibleVersionStatus(v.status);
@@ -260,8 +251,8 @@ export function LifecyclePanel({
               )}
             </div>
           )}
-        </CardBody>
-      </Card>
+        </div>
+      </AdminPanel>
     </div>
   );
 }

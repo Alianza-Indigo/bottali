@@ -70,18 +70,18 @@ export function ProvidersList({ providers }: { providers: ProviderRow[] }) {
       )}
       <ul className="divide-y divide-border">
         {providers.map((provider) => (
-          <li key={provider.id} className="flex items-center justify-between px-5 py-3">
-            <div>
+          <li key={provider.id} className="flex flex-col gap-3 px-4 py-3 xl:flex-row xl:items-center xl:justify-between xl:px-5">
+            <div className="min-w-0">
               <p className="text-sm text-ink">{provider.name}</p>
               <p className="text-xs text-ink-faint">
                 {provider.kind} · {provider.key}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Badge tone={provider.enabled ? "success" : "neutral"}>{provider.enabled ? "Habilitado" : "No configurado"}</Badge>
               {(status[provider.id] || provider.lastHealthcheckStatus) && (
                 <Badge tone={(status[provider.id] ?? provider.lastHealthcheckStatus) === "healthy" ? "success" : "danger"}>
-                  {status[provider.id] ?? provider.lastHealthcheckStatus}
+                  {(status[provider.id] ?? provider.lastHealthcheckStatus) === "healthy" ? "Disponible" : "Con problemas"}
                 </Badge>
               )}
               <Button size="sm" variant="secondary" loading={busyId === provider.id} onClick={() => test(provider.id)}>

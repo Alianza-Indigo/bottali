@@ -1,9 +1,10 @@
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { userProfiles, users } from "@/db/schema";
-import { Card } from "@/components/ui/Card";
+import { UserPlus, Users } from "lucide-react";
 import { UsersTable } from "@/components/admin/users/UsersTable";
 import { CreateUserForm } from "@/components/admin/users/CreateUserForm";
+import { AdminPageHeader, AdminPanel } from "@/components/admin/AdminPage";
 
 export const metadata = { title: "Usuarios — Admin" };
 
@@ -21,12 +22,18 @@ export default async function AdminUsersPage() {
     .limit(100);
 
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold text-ink">Usuarios</h1>
-      <CreateUserForm />
-      <Card>
+    <div className="flex flex-col gap-6">
+      <AdminPageHeader
+        icon={Users}
+        title="Usuarios"
+        description="Administra el acceso, estado y sesiones de las cuentas de la plataforma."
+      />
+      <AdminPanel title="Agregar usuarios" description="Crea una cuenta individual o importa varias de una sola vez." action={<UserPlus className="h-4 w-4 text-ink-faint" />}>
+        <CreateUserForm />
+      </AdminPanel>
+      <AdminPanel title={`${rows.length} usuarios recientes`} description="Se muestran las 100 cuentas más recientes." contentClassName="">
         <UsersTable users={rows} />
-      </Card>
+      </AdminPanel>
     </div>
   );
 }
