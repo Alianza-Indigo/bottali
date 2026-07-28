@@ -17,13 +17,18 @@ import {
 type Executor = DbOrTx;
 
 export async function getAnalyticsOverview(executor: Executor = db) {
-  const [[userCount], [publishedToolCount], [toolCount], [conversationCount], [messageCount], [tokenUsage], [costTotal], [activationCount]] =
+  const [[userCount], [activeUserCount], [publishedToolCount], [toolCount], [conversationCount], [messageCount], [failedMessageCount], [tokenUsage], [costTotal], [activationCount]] =
     await Promise.all([
       executor.select({ count: sql<number>`count(*)::int` }).from(users),
+      executor
+        .select({ count: sql<number>`count(distinct ${conversations.userId})::int` })
+        .from(conversations)
+        .where(sql`${conversations.updatedAt} >= now() - interval '30 days'`),
       executor.select({ count: sql<number>`count(*)::int` }).from(tools).where(sql`${tools.status} = 'PUBLISHED'`),
       executor.select({ count: sql<number>`count(*)::int` }).from(tools),
       executor.select({ count: sql<number>`count(*)::int` }).from(conversations),
       executor.select({ count: sql<number>`count(*)::int` }).from(messages),
+      executor.select({ count: sql<number>`count(*)::int` }).from(messages).where(sql`${messages.status} = 'FAILED'`),
       executor.select({ total: sql<number>`coalesce(sum(${usageEvents.inputTokens} + ${usageEvents.outputTokens}), 0)::bigint` }).from(usageEvents),
       executor.select({ total: sql<number>`coalesce(sum(${costEvents.amountCents}), 0)::numeric` }).from(costEvents),
       executor.select({ count: sql<number>`count(*)::int` }).from(toolActivations),
@@ -31,10 +36,12 @@ export async function getAnalyticsOverview(executor: Executor = db) {
 
   return {
     users: userCount?.count ?? 0,
+    activeUsers: activeUserCount?.count ?? 0,
     publishedTools: publishedToolCount?.count ?? 0,
     totalTools: toolCount?.count ?? 0,
     conversations: conversationCount?.count ?? 0,
     messages: messageCount?.count ?? 0,
+    failedMessages: failedMessageCount?.count ?? 0,
     totalTokens: Number(tokenUsage?.total ?? 0),
     totalCostCents: Number(costTotal?.total ?? 0),
     toolActivations: activationCount?.count ?? 0,
@@ -136,4 +143,33 @@ export async function getOperationalAlerts(executor: Executor = db) {
       abnormal: last24Hours >= 100 && last24Hours > previousDailyAverage * 2,
     },
   };
+}
+
+export async function getConversationTrend(days = 7, executor: Executor = db) {
+  return executor
+    .select({
+      day: sql<string>`to_char(date_trunc('day', ${conversations.createdAt}), 'YYYY-MM-DD')`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(conversations)
+    .where(sql`${conversations.createdAt} >= date_trunc('day', now()) - (${days - 1} * interval '1 day')`)
+    .groupBy(sql`date_trunc('day', ${conversations.createdAt})`)
+    .orderBy(sql`date_trunc('day', ${conversations.createdAt})`);
+}
+
+export async function getRecentAuditActivity(limit = 6, executor: Executor = db) {
+  return executor
+    .select({
+      id: auditEvents.id,
+      action: auditEvents.action,
+      resourceType: auditEvents.resourceType,
+      resourceId: auditEvents.resourceId,
+      result: auditEvents.result,
+      createdAt: auditEvents.createdAt,
+      actorEmail: users.email,
+    })
+    .from(auditEvents)
+    .leftJoin(users, eq(users.id, auditEvents.actorId))
+    .orderBy(desc(auditEvents.createdAt))
+    .limit(limit);
 }
