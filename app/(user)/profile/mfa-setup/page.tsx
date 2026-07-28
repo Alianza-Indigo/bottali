@@ -1,6 +1,8 @@
+import { redirect } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth/current-user";
 import { isMfaEnabled } from "@/lib/auth/session";
 import { MfaSetupPanel } from "@/components/profile/MfaSetupPanel";
+import { getEnv } from "@/lib/env";
 
 export const metadata = { title: "Verificación en dos pasos" };
 
@@ -9,6 +11,7 @@ export default async function MfaSetupPage({
 }: {
   searchParams: Promise<{ required?: string }>;
 }) {
+  if (!getEnv().ENABLE_MFA) redirect("/profile");
   const user = await requireCurrentUser();
   const { required } = await searchParams;
   const enabled = await isMfaEnabled(user.id);

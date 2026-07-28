@@ -82,11 +82,9 @@ const envSchema = z.object({
   ENABLE_FILES: boolFromString,
   ENABLE_PWA: boolFromString,
   ENABLE_ANALYTICS: boolFromString,
-  // Temporary escape hatch (§28): unset/false preserves the normal behavior (MFA required
-  // at login for any account that has it enabled, and required outright for every admin
-  // role). Set to "true" to switch both checks off without touching any code — turn back
-  // off the same way once the reason for disabling it is resolved.
-  DISABLE_MFA: boolFromString,
+  // MFA remains available in the codebase but is disabled for the current product phase.
+  // Set to "true" when the login challenge and admin requirement are ready to launch.
+  ENABLE_MFA: boolFromString,
 
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   SENTRY_DSN: z.string().optional(),

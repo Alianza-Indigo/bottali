@@ -6,6 +6,7 @@ import {
 } from "@/lib/auth/google";
 import { createSession, isMfaEnabled } from "@/lib/auth/session";
 import { recordAuditEvent } from "@/lib/audit/log";
+import { getEnv } from "@/lib/env";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
   try {
     const { identity, returnPath } = await completeGoogleAuthorization(code, state);
     const { userId, created } = await findOrCreateGoogleUser(identity);
-    const mfaRequired = await isMfaEnabled(userId);
+    const mfaRequired = getEnv().ENABLE_MFA ? await isMfaEnabled(userId) : false;
     await createSession(userId, { requireMfaVerification: mfaRequired });
     await recordAuditEvent({
       actorId: userId,
