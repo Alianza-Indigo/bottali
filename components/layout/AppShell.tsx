@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ShieldCheck } from "lucide-react";
 import { LogoutButton } from "./LogoutButton";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 
@@ -10,7 +11,15 @@ const NAV_ITEMS = [
   { href: "/notifications", label: "Notificaciones" },
 ];
 
-export function AppShell({ children, displayName }: { children: React.ReactNode; displayName: string | null }) {
+export function AppShell({
+  children,
+  displayName,
+  canAccessAdmin,
+}: {
+  children: React.ReactNode;
+  displayName: string | null;
+  canAccessAdmin: boolean;
+}) {
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-surface-raised">
@@ -26,6 +35,15 @@ export function AppShell({ children, displayName }: { children: React.ReactNode;
             ))}
           </nav>
           <div className="flex items-center gap-3">
+            {canAccessAdmin && (
+              <Link
+                href="/admin"
+                className="hidden min-h-9 items-center gap-2 rounded-md border border-teal-700 px-3 text-sm font-medium text-teal-700 transition-colors hover:bg-teal-50 sm:inline-flex"
+              >
+                <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                Administración
+              </Link>
+            )}
             <Link href="/profile" className="text-sm text-ink-muted hover:text-ink">
               {displayName ?? "Mi perfil"}
             </Link>
@@ -38,6 +56,12 @@ export function AppShell({ children, displayName }: { children: React.ReactNode;
               {item.label}
             </Link>
           ))}
+          {canAccessAdmin && (
+            <Link href="/admin" className="inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium text-teal-700">
+              <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+              Administración
+            </Link>
+          )}
         </nav>
       </header>
       <main id="main-content" className="mx-auto max-w-6xl px-4 py-8">

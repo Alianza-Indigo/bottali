@@ -1,10 +1,16 @@
 import { redirect } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/session";
 import { AppShell } from "@/components/layout/AppShell";
+import { canAccessAdminPanel } from "@/lib/permissions/admin-guard";
 
 export default async function UserLayout({ children }: { children: React.ReactNode }) {
   const session = await getCurrentSession();
   if (!session) redirect("/login");
+  const canAccessAdmin = await canAccessAdminPanel(session.id);
 
-  return <AppShell displayName={session.displayName}>{children}</AppShell>;
+  return (
+    <AppShell displayName={session.displayName} canAccessAdmin={canAccessAdmin}>
+      {children}
+    </AppShell>
+  );
 }
