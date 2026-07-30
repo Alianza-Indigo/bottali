@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUserWithPermission } from "@/lib/permissions/require";
+import { getToolForOrganization } from "@/lib/tools/repository";
 import { resumeTool } from "@/lib/tools/service";
 import { handleApiError } from "@/lib/validation/http";
 
@@ -7,6 +8,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   try {
     const user = await requireUserWithPermission("tools.pause");
     const { id } = await params;
+    await getToolForOrganization(id, user.organizationId);
     await resumeTool(id, user.id);
     return NextResponse.json({ message: "Herramienta reanudada." });
   } catch (error) {

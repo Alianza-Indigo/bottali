@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     const parsedToolId = z.string().uuid().safeParse(form.get("toolId"));
     if (!parsedToolId.success) throw new ValidationError("Falta una herramienta válida.");
     const toolId = parsedToolId.data;
-    await requireToolRuntimeCapability(toolId, user.id, "voiceInput");
+    await requireToolRuntimeCapability(toolId, user.id, user.organizationId, "voiceInput");
     const availability = await getToolVoiceAvailability(toolId);
     if (!availability.input) {
       throw new ForbiddenError("La entrada de voz no tiene un proveedor configurado.");

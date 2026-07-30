@@ -14,7 +14,7 @@ import { handleApiError } from "@/lib/validation/http";
 export async function GET() {
   try {
     const user = await requireCurrentUser();
-    await requirePermission(user.id, "security.read");
+    await requirePermission(user.id, "security.read", user.organizationId);
 
     const env = getEnv();
     const started = Date.now();

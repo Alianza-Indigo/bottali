@@ -2,6 +2,10 @@ import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { LogoutButton } from "./LogoutButton";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
+import {
+  OrganizationSwitcher,
+  type OrganizationOption,
+} from "@/components/organizations/OrganizationSwitcher";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Panel" },
@@ -15,18 +19,29 @@ export function AppShell({
   children,
   displayName,
   canAccessAdmin,
+  activeOrganization,
+  organizations,
 }: {
   children: React.ReactNode;
   displayName: string | null;
   canAccessAdmin: boolean;
+  activeOrganization: { id: string; name: string };
+  organizations: OrganizationOption[];
 }) {
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-surface-raised">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-          <Link href="/dashboard" className="text-sm font-semibold text-ink">
-            Plataforma de Herramientas
-          </Link>
+          <div className="flex min-w-0 items-center gap-3">
+            <Link href="/dashboard" className="hidden text-sm font-semibold text-ink sm:block">
+              {activeOrganization.name}
+            </Link>
+            <OrganizationSwitcher
+              activeOrganizationId={activeOrganization.id}
+              organizations={organizations}
+              compact
+            />
+          </div>
           <nav aria-label="Navegación principal" className="hidden gap-4 md:flex">
             {NAV_ITEMS.map((item) => (
               <Link key={item.href} href={item.href} className="text-sm text-ink-muted hover:text-ink">

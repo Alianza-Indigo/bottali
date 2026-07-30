@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { conversations, generatedFiles, uploadedFiles } from "@/db/schema";
 import { getStorageAdapter } from "@/lib/storage";
@@ -7,6 +7,7 @@ import { getEnv } from "@/lib/env";
 import { ALLOWED_UPLOAD_MIME_TYPES, sniffMimeType } from "./validate";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { recordAuditEvent } from "@/lib/audit/log";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 function sanitizeBlobKey(userId: string, fileId: string, originalName: string): string {
   // Never derive the storage key from the user-supplied filename (path traversal,
@@ -18,6 +19,7 @@ function sanitizeBlobKey(userId: string, fileId: string, originalName: string): 
 
 export interface InitiateUploadInput {
   userId: string;
+  organizationId?: string;
   toolId?: string;
   conversationId?: string;
   originalName: string;
@@ -26,6 +28,7 @@ export interface InitiateUploadInput {
 }
 
 export async function initiateUpload(input: InitiateUploadInput): Promise<{ fileId: string }> {
+  const organizationId = input.organizationId ?? DEFAULT_ORGANIZATION_ID;
   const env = getEnv();
   if (!env.ENABLE_FILES) throw new ForbiddenError("La carga de archivos no está habilitada en esta instancia.");
   if (input.sizeBytes <= 0 || input.sizeBytes > env.MAX_UPLOAD_BYTES) {
@@ -35,13 +38,18 @@ export async function initiateUpload(input: InitiateUploadInput): Promise<{ file
     throw new ValidationError(`Tipo de archivo no permitido: ${input.mimeType}`);
   }
   if (input.conversationId) {
-    const rows = await db.select({ userId: conversations.userId }).from(conversations).where(eq(conversations.id, input.conversationId)).limit(1);
+    const rows = await db
+      .select({ userId: conversations.userId })
+      .from(conversations)
+      .where(and(eq(conversations.id, input.conversationId), eq(conversations.organizationId, organizationId)))
+      .limit(1);
     if (!rows[0] || rows[0].userId !== input.userId) throw new ForbiddenError("No puedes adjuntar archivos a esta conversación.");
   }
 
   const [file] = await db
     .insert(uploadedFiles)
     .values({
+      organizationId,
       userId: input.userId,
       toolId: input.toolId,
       conversationId: input.conversationId,
@@ -58,11 +66,16 @@ export async function initiateUpload(input: InitiateUploadInput): Promise<{ file
   return { fileId: file.id };
 }
 
-export async function completeUpload(fileId: string, userId: string, bytes: Buffer): Promise<void> {
+export async function completeUpload(
+  fileId: string,
+  userId: string,
+  bytes: Buffer,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
   const env = getEnv();
   const rows = await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).limit(1);
   const file = rows[0];
-  if (!file) throw new NotFoundError("Carga no encontrada.");
+  if (!file || file.organizationId !== organizationId) throw new NotFoundError("Carga no encontrada.");
   if (file.userId !== userId) throw new ForbiddenError("No puedes completar esta carga.");
   if (file.status !== "PENDING") throw new ValidationError("Esta carga ya fue procesada.");
 
@@ -94,10 +107,16 @@ export async function completeUpload(fileId: string, userId: string, bytes: Buff
   await recordAuditEvent({ actorId: userId, action: "file.upload_complete", resourceType: "uploaded_file", resourceId: fileId });
 }
 
-export async function getFileForDownload(fileId: string, userId: string): Promise<{ buffer: Buffer; mimeType: string; originalName: string }> {
+export async function getFileForDownload(
+  fileId: string,
+  userId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<{ buffer: Buffer; mimeType: string; originalName: string }> {
   const rows = await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).limit(1);
   const file = rows[0];
-  if (!file || file.deletedAt || file.status !== "VALIDATED") throw new NotFoundError("Archivo no encontrado.");
+  if (!file || file.organizationId !== organizationId || file.deletedAt || file.status !== "VALIDATED") {
+    throw new NotFoundError("Archivo no encontrado.");
+  }
   if (file.userId !== userId) throw new ForbiddenError("No puedes descargar este archivo.");
 
   const buffer = await getStorageAdapter().get(file.blobKey);
@@ -116,10 +135,13 @@ export async function attachFilesToMessage(
   userId: string,
   conversationId: string,
   messageId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
 ): Promise<Array<{ id: string; originalName: string; mimeType: string }>> {
   if (fileIds.length === 0) return [];
   const rows = await db.select().from(uploadedFiles).where(inArray(uploadedFiles.id, fileIds));
-  const valid = rows.filter((f) => f.userId === userId && f.status === "VALIDATED" && !f.deletedAt);
+  const valid = rows.filter(
+    (f) => f.organizationId === organizationId && f.userId === userId && f.status === "VALIDATED" && !f.deletedAt,
+  );
   if (valid.length === 0) return [];
   await Promise.all(valid.map((f) => db.update(uploadedFiles).set({ messageId, conversationId }).where(eq(uploadedFiles.id, f.id))));
   return valid.map((f) => ({ id: f.id, originalName: f.originalName, mimeType: f.mimeType }));
@@ -127,6 +149,7 @@ export async function attachFilesToMessage(
 
 export interface GeneratedDocumentInput {
   userId: string;
+  organizationId?: string;
   toolId: string;
   conversationId: string;
   messageId: string;
@@ -154,6 +177,7 @@ export async function persistGeneratedDocument(input: GeneratedDocumentInput): P
     .insert(generatedFiles)
     .values({
       id: fileId,
+      organizationId: input.organizationId ?? DEFAULT_ORGANIZATION_ID,
       userId: input.userId,
       toolId: input.toolId,
       conversationId: input.conversationId,
@@ -174,10 +198,11 @@ export async function persistGeneratedDocument(input: GeneratedDocumentInput): P
 export async function getGeneratedFileForDownload(
   fileId: string,
   userId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
 ): Promise<{ buffer: Buffer; mimeType: string; title: string }> {
   const rows = await db.select().from(generatedFiles).where(eq(generatedFiles.id, fileId)).limit(1);
   const file = rows[0];
-  if (!file || file.deletedAt) throw new NotFoundError("Documento no encontrado.");
+  if (!file || file.organizationId !== organizationId || file.deletedAt) throw new NotFoundError("Documento no encontrado.");
   if (file.userId !== userId) throw new ForbiddenError("No puedes descargar este documento.");
 
   const buffer = await getStorageAdapter().get(file.blobKey);
@@ -185,10 +210,14 @@ export async function getGeneratedFileForDownload(
   return { buffer, mimeType: file.mimeType, title: file.title };
 }
 
-export async function deleteUploadedFile(fileId: string, userId: string): Promise<void> {
+export async function deleteUploadedFile(
+  fileId: string,
+  userId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
   const rows = await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).limit(1);
   const file = rows[0];
-  if (!file) throw new NotFoundError("Archivo no encontrado.");
+  if (!file || file.organizationId !== organizationId) throw new NotFoundError("Archivo no encontrado.");
   if (file.userId !== userId) throw new ForbiddenError("No puedes eliminar este archivo.");
 
   if (file.blobKey) {

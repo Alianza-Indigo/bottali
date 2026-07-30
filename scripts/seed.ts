@@ -7,6 +7,7 @@ import { syncProvidersFromEnv } from "@/lib/ai/sync-providers";
 import { seedDefaultLegalDocuments } from "@/lib/legal/seed-legal";
 import { seedBootstrapSuperAdmin } from "@/db/seed/bootstrap-admin";
 import { seedDemoData } from "@/db/seed/demo";
+import { seedDefaultOrganizationAndMemberships } from "@/db/seed/organizations";
 
 async function main() {
   const env = getEnv();
@@ -25,11 +26,13 @@ async function main() {
 
   if (env.APP_ENV === "production") {
     console.log("APP_ENV=production: se omiten los datos de demostración.");
-    return;
+  } else {
+    console.log("Sembrando datos de demostración (solo desarrollo) ...");
+    await seedDemoData(db);
   }
 
-  console.log("Sembrando datos de demostración (solo desarrollo) ...");
-  await seedDemoData(db);
+  console.log("Asegurando organización predeterminada y membresías ...");
+  await seedDefaultOrganizationAndMemberships(db);
   console.log("Seed completo.");
 }
 

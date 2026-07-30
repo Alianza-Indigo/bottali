@@ -1,5 +1,5 @@
 import "server-only";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { toolBranding, toolCapabilities, tools } from "@/db/schema";
 import { resolveCatalogStates, type CatalogState } from "./access";
@@ -24,8 +24,11 @@ export interface CatalogItem {
  * branding/capabilities across all published tools in two queries total, and calls
  * resolveCatalogStates once instead of resolveCatalogState per tool (§46).
  */
-export async function getCatalogItems(userId: string): Promise<CatalogItem[]> {
-  const publishedTools = await db.select().from(tools).where(eq(tools.status, "PUBLISHED"));
+export async function getCatalogItems(userId: string, organizationId: string): Promise<CatalogItem[]> {
+  const publishedTools = await db
+    .select()
+    .from(tools)
+    .where(and(eq(tools.organizationId, organizationId), eq(tools.status, "PUBLISHED")));
   const versionIds = publishedTools.map((t) => t.publishedVersionId).filter((id): id is string => Boolean(id));
   if (versionIds.length === 0) return [];
 
@@ -35,6 +38,7 @@ export async function getCatalogItems(userId: string): Promise<CatalogItem[]> {
     resolveCatalogStates(
       publishedTools.map((t) => t.id),
       userId,
+      organizationId,
     ),
   ]);
 

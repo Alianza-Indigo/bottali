@@ -1,7 +1,18 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { accessRequests, groupMembers, toolAccessRules, toolActivations, toolAssignments, tools, userRoles } from "@/db/schema";
+import {
+  accessRequests,
+  groupMembers,
+  groups,
+  organizationMemberRoles,
+  toolAccessRules,
+  toolActivations,
+  toolAssignments,
+  tools,
+  userRoles,
+} from "@/db/schema";
 import { getVersionById } from "./repository";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 async function isActivatedByUser(toolId: string, userId: string): Promise<boolean> {
   const rows = await db
@@ -26,6 +37,7 @@ export type CatalogState =
 interface ResolveArgs {
   toolId: string;
   userId: string;
+  organizationId?: string;
 }
 
 /**
@@ -34,15 +46,35 @@ interface ResolveArgs {
  * every DENY assignment scoped to the user (direct, by group, or by role) before
  * evaluating the tool's general access mode.
  */
-async function hasExplicitDenial(toolId: string, userId: string): Promise<boolean> {
-  const userGroups = await db.select({ groupId: groupMembers.groupId }).from(groupMembers).where(eq(groupMembers.userId, userId));
-  const userRoleRows = await db.select({ roleId: userRoles.roleId }).from(userRoles).where(eq(userRoles.userId, userId));
+async function getAccessSubjects(userId: string, organizationId: string) {
+  const [userGroups, globalRoleRows, organizationRoleRows] = await Promise.all([
+    db
+      .select({ groupId: groupMembers.groupId })
+      .from(groupMembers)
+      .innerJoin(groups, eq(groups.id, groupMembers.groupId))
+      .where(and(eq(groupMembers.userId, userId), eq(groups.organizationId, organizationId))),
+    db.select({ roleId: userRoles.roleId }).from(userRoles).where(eq(userRoles.userId, userId)),
+    db
+      .select({ roleId: organizationMemberRoles.roleId })
+      .from(organizationMemberRoles)
+      .where(
+        and(
+          eq(organizationMemberRoles.userId, userId),
+          eq(organizationMemberRoles.organizationId, organizationId),
+        ),
+      ),
+  ]);
+  return {
+    groupIds: new Set(userGroups.map((g) => g.groupId)),
+    roleIds: new Set([...globalRoleRows, ...organizationRoleRows].map((r) => r.roleId)),
+  };
+}
+
+async function hasExplicitDenial(toolId: string, userId: string, organizationId: string): Promise<boolean> {
+  const { groupIds, roleIds } = await getAccessSubjects(userId, organizationId);
 
   const assignments = await db.select().from(toolAssignments).where(and(eq(toolAssignments.toolId, toolId), eq(toolAssignments.decision, "DENY")));
 
-  const groupIds = new Set(userGroups.map((g) => g.groupId));
-  const roleIds = new Set(userRoleRows.map((r) => r.roleId));
-
   return assignments.some((a) => {
     if (a.subjectType === "USER" && a.userId === userId) return true;
     if (a.subjectType === "GROUP" && a.groupId && groupIds.has(a.groupId)) return true;
@@ -51,14 +83,10 @@ async function hasExplicitDenial(toolId: string, userId: string): Promise<boolea
   });
 }
 
-async function hasExplicitAllow(toolId: string, userId: string): Promise<boolean> {
-  const userGroups = await db.select({ groupId: groupMembers.groupId }).from(groupMembers).where(eq(groupMembers.userId, userId));
-  const userRoleRows = await db.select({ roleId: userRoles.roleId }).from(userRoles).where(eq(userRoles.userId, userId));
+async function hasExplicitAllow(toolId: string, userId: string, organizationId: string): Promise<boolean> {
+  const { groupIds, roleIds } = await getAccessSubjects(userId, organizationId);
   const assignments = await db.select().from(toolAssignments).where(and(eq(toolAssignments.toolId, toolId), eq(toolAssignments.decision, "ALLOW")));
 
-  const groupIds = new Set(userGroups.map((g) => g.groupId));
-  const roleIds = new Set(userRoleRows.map((r) => r.roleId));
-
   return assignments.some((a) => {
     if (a.subjectType === "USER" && a.userId === userId) return true;
     if (a.subjectType === "GROUP" && a.groupId && groupIds.has(a.groupId)) return true;
@@ -67,8 +95,12 @@ async function hasExplicitAllow(toolId: string, userId: string): Promise<boolean
   });
 }
 
-export async function resolveCatalogState({ toolId, userId }: ResolveArgs): Promise<CatalogState> {
-  const tool = await db.select().from(tools).where(eq(tools.id, toolId)).limit(1);
+export async function resolveCatalogState({ toolId, userId, organizationId = DEFAULT_ORGANIZATION_ID }: ResolveArgs): Promise<CatalogState> {
+  const tool = await db
+    .select()
+    .from(tools)
+    .where(and(eq(tools.id, toolId), eq(tools.organizationId, organizationId)))
+    .limit(1);
   const row = tool[0];
   if (!row) throw new Error("Herramienta no encontrada.");
 
@@ -76,7 +108,7 @@ export async function resolveCatalogState({ toolId, userId }: ResolveArgs): Prom
   if (row.status === "SUSPENDED") return "SUSPENDED";
   if (row.status !== "PUBLISHED") return "COMING_SOON";
 
-  if (await hasExplicitDenial(toolId, userId)) return "SUSPENDED";
+  if (await hasExplicitDenial(toolId, userId, organizationId)) return "SUSPENDED";
 
   const publishedVersion = row.publishedVersionId ? await getVersionById(row.publishedVersionId) : null;
   const accessRuleRows = publishedVersion
@@ -87,7 +119,7 @@ export async function resolveCatalogState({ toolId, userId }: ResolveArgs): Prom
   if (accessRule?.startsAt && accessRule.startsAt.getTime() > Date.now()) return "COMING_SOON";
   if (accessRule?.endsAt && accessRule.endsAt.getTime() < Date.now()) return "EXPIRED";
 
-  const explicitlyAllowed = await hasExplicitAllow(toolId, userId);
+  const explicitlyAllowed = await hasExplicitAllow(toolId, userId, organizationId);
   const activated = await isActivatedByUser(toolId, userId);
 
   if (explicitlyAllowed) return activated ? "ACTIVE" : "AVAILABLE";
@@ -126,13 +158,24 @@ export async function resolveCatalogState({ toolId, userId }: ResolveArgs): Prom
  * well-tested single-tool path is never touched; tests/integration/tools-lifecycle.test.ts
  * asserts the two agree tool-by-tool.
  */
-export async function resolveCatalogStates(toolIds: string[], userId: string): Promise<Map<string, CatalogState>> {
+export async function resolveCatalogStates(
+  toolIds: string[],
+  userId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<Map<string, CatalogState>> {
   const result = new Map<string, CatalogState>();
   if (toolIds.length === 0) return result;
 
   const [toolRows, userGroups, userRoleRows, deniedAssignments, allowedAssignments, activations, requests] = await Promise.all([
-    db.select().from(tools).where(inArray(tools.id, toolIds)),
-    db.select({ groupId: groupMembers.groupId }).from(groupMembers).where(eq(groupMembers.userId, userId)),
+    db
+      .select()
+      .from(tools)
+      .where(and(inArray(tools.id, toolIds), eq(tools.organizationId, organizationId))),
+    db
+      .select({ groupId: groupMembers.groupId })
+      .from(groupMembers)
+      .innerJoin(groups, eq(groups.id, groupMembers.groupId))
+      .where(and(eq(groupMembers.userId, userId), eq(groups.organizationId, organizationId))),
     db.select({ roleId: userRoles.roleId }).from(userRoles).where(eq(userRoles.userId, userId)),
     db.select().from(toolAssignments).where(and(inArray(toolAssignments.toolId, toolIds), eq(toolAssignments.decision, "DENY"))),
     db.select().from(toolAssignments).where(and(inArray(toolAssignments.toolId, toolIds), eq(toolAssignments.decision, "ALLOW"))),
@@ -142,9 +185,18 @@ export async function resolveCatalogStates(toolIds: string[], userId: string): P
       .where(and(inArray(toolActivations.toolId, toolIds), eq(toolActivations.userId, userId), isNull(toolActivations.deactivatedAt))),
     db.select().from(accessRequests).where(and(inArray(accessRequests.toolId, toolIds), eq(accessRequests.userId, userId))),
   ]);
+  const organizationRoleRows = await db
+    .select({ roleId: organizationMemberRoles.roleId })
+    .from(organizationMemberRoles)
+    .where(
+      and(
+        eq(organizationMemberRoles.userId, userId),
+        eq(organizationMemberRoles.organizationId, organizationId),
+      ),
+    );
 
   const groupIds = new Set(userGroups.map((g) => g.groupId));
-  const roleIds = new Set(userRoleRows.map((r) => r.roleId));
+  const roleIds = new Set([...userRoleRows, ...organizationRoleRows].map((r) => r.roleId));
   const activatedToolIds = new Set(activations.map((a) => a.toolId));
   const requestByTool = new Map(requests.map((r) => [r.toolId, r]));
 
@@ -222,13 +274,21 @@ export async function resolveCatalogStates(toolIds: string[], userId: string): P
 
 /** True once the tool is both authorized for this user AND explicitly activated by them —
  * this is the gate actually enforced by the conversation pipeline (§12 step 3). */
-export async function canUserAccessTool(toolId: string, userId: string): Promise<boolean> {
-  const state = await resolveCatalogState({ toolId, userId });
+export async function canUserAccessTool(
+  toolId: string,
+  userId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<boolean> {
+  const state = await resolveCatalogState({ toolId, userId, organizationId });
   return state === "ACTIVE";
 }
 
-export async function activateToolForUser(toolId: string, userId: string): Promise<void> {
-  const state = await resolveCatalogState({ toolId, userId });
+export async function activateToolForUser(
+  toolId: string,
+  userId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
+  const state = await resolveCatalogState({ toolId, userId, organizationId });
   if (state !== "AVAILABLE" && state !== "ACTIVE") {
     throw new Error("El usuario no está autorizado para activar esta herramienta.");
   }
@@ -244,15 +304,25 @@ export async function activateToolForUser(toolId: string, userId: string): Promi
   }
 }
 
-export async function deactivateToolForUser(toolId: string, userId: string): Promise<void> {
+export async function deactivateToolForUser(
+  toolId: string,
+  userId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
+  await resolveCatalogState({ toolId, userId, organizationId });
   await db
     .update(toolActivations)
     .set({ deactivatedAt: new Date() })
     .where(and(eq(toolActivations.toolId, toolId), eq(toolActivations.userId, userId)));
 }
 
-export async function requestToolAccess(toolId: string, userId: string, reason?: string): Promise<void> {
-  const state = await resolveCatalogState({ toolId, userId });
+export async function requestToolAccess(
+  toolId: string,
+  userId: string,
+  reason?: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
+  const state = await resolveCatalogState({ toolId, userId, organizationId });
   if (state !== "APPROVAL_REQUIRED" && state !== "INVITATION_ONLY") {
     throw new Error("Esta herramienta no requiere solicitud de acceso.");
   }

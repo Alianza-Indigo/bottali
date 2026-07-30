@@ -8,7 +8,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   try {
     const user = await requireCurrentUser();
     const { id } = await params;
-    await activateToolForUser(id, user.id);
+    await activateToolForUser(id, user.id, user.organizationId);
     await recordAuditEvent({ actorId: user.id, action: "catalog.tool.activate", resourceType: "tool", resourceId: id });
     return NextResponse.json({ message: "Herramienta activada." });
   } catch (error) {

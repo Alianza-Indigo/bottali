@@ -9,11 +9,22 @@ import { assertValidDocumentTransition, type KnowledgeDocumentStatus } from "./s
 import { getJobProvider } from "@/lib/jobs";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { recordAuditEvent } from "@/lib/audit/log";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
-export async function createKnowledgeBase(toolId: string | null, name: string, description: string | undefined, actorId: string) {
+export async function createKnowledgeBase(
+  toolId: string | null,
+  name: string,
+  description: string | undefined,
+  actorId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+) {
   if (toolId) {
     const [tool, existing] = await Promise.all([
-      db.select({ id: tools.id }).from(tools).where(eq(tools.id, toolId)).limit(1),
+      db
+        .select({ id: tools.id })
+        .from(tools)
+        .where(and(eq(tools.id, toolId), eq(tools.organizationId, organizationId)))
+        .limit(1),
       db
         .select({ id: knowledgeBases.id })
         .from(knowledgeBases)
@@ -23,23 +34,41 @@ export async function createKnowledgeBase(toolId: string | null, name: string, d
     if (!tool[0]) throw new NotFoundError("Herramienta no encontrada.");
     if (existing[0]) throw new ValidationError("Esta herramienta ya tiene una base de conocimiento.");
   }
-  const [kb] = await db.insert(knowledgeBases).values({ toolId, name, description, createdBy: actorId }).returning();
+  const [kb] = await db
+    .insert(knowledgeBases)
+    .values({ organizationId, toolId, name, description, createdBy: actorId })
+    .returning();
   if (!kb) throw new Error("No fue posible crear la base de conocimiento.");
   await recordAuditEvent({ actorId, action: "knowledge_base.create", resourceType: "knowledge_base", resourceId: kb.id });
   return kb;
 }
 
-export async function listKnowledgeBases(toolId?: string) {
-  if (toolId) return db.select().from(knowledgeBases).where(eq(knowledgeBases.toolId, toolId));
-  return db.select().from(knowledgeBases);
+export async function listKnowledgeBases(organizationId: string, toolId?: string) {
+  if (toolId) {
+    return db
+      .select()
+      .from(knowledgeBases)
+      .where(and(eq(knowledgeBases.organizationId, organizationId), eq(knowledgeBases.toolId, toolId)));
+  }
+  return db.select().from(knowledgeBases).where(eq(knowledgeBases.organizationId, organizationId));
 }
 
-export async function disableKnowledgeBase(knowledgeBaseId: string, actorId: string): Promise<void> {
+export async function disableKnowledgeBase(
+  knowledgeBaseId: string,
+  actorId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
+  await assertCanManageKnowledgeBase(knowledgeBaseId, organizationId);
   await db.update(knowledgeBases).set({ disabledAt: new Date() }).where(eq(knowledgeBases.id, knowledgeBaseId));
   await recordAuditEvent({ actorId, action: "knowledge_base.disable", resourceType: "knowledge_base", resourceId: knowledgeBaseId });
 }
 
-export async function deleteKnowledgeBase(knowledgeBaseId: string, actorId: string): Promise<void> {
+export async function deleteKnowledgeBase(
+  knowledgeBaseId: string,
+  actorId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
+  await assertCanManageKnowledgeBase(knowledgeBaseId, organizationId);
   await db.update(knowledgeBases).set({ deletedAt: new Date() }).where(eq(knowledgeBases.id, knowledgeBaseId));
   await recordAuditEvent({ actorId, action: "knowledge_base.delete", resourceType: "knowledge_base", resourceId: knowledgeBaseId });
 }
@@ -54,6 +83,7 @@ async function transitionDocument(documentId: string, to: KnowledgeDocumentStatu
 
 export interface InitiateDocumentUploadInput {
   knowledgeBaseId: string;
+  organizationId?: string;
   originalName: string;
   mimeType: string;
   sizeBytes: number;
@@ -62,6 +92,7 @@ export interface InitiateDocumentUploadInput {
 }
 
 export async function initiateDocumentUpload(input: InitiateDocumentUploadInput): Promise<{ documentId: string }> {
+  await assertCanManageKnowledgeBase(input.knowledgeBaseId, input.organizationId ?? DEFAULT_ORGANIZATION_ID);
   const env = getEnv();
   if (input.sizeBytes <= 0 || input.sizeBytes > env.MAX_UPLOAD_BYTES) {
     throw new ValidationError(`El documento debe pesar entre 1 byte y ${env.MAX_UPLOAD_BYTES} bytes.`);
@@ -86,7 +117,13 @@ export async function initiateDocumentUpload(input: InitiateDocumentUploadInput)
   return { documentId: doc.id };
 }
 
-export async function completeDocumentUpload(documentId: string, actorId: string, bytes: Buffer): Promise<void> {
+export async function completeDocumentUpload(
+  documentId: string,
+  actorId: string,
+  bytes: Buffer,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
+  await assertDocumentForOrganization(documentId, organizationId);
   const rows = await db.select().from(knowledgeDocuments).where(eq(knowledgeDocuments.id, documentId)).limit(1);
   const doc = rows[0];
   if (!doc) throw new NotFoundError("Documento no encontrado.");
@@ -123,7 +160,12 @@ export async function completeDocumentUpload(documentId: string, actorId: string
   });
 }
 
-export async function reindexDocument(documentId: string, actorId: string): Promise<{ jobId: string }> {
+export async function reindexDocument(
+  documentId: string,
+  actorId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<{ jobId: string }> {
+  await assertDocumentForOrganization(documentId, organizationId);
   const rows = await db.select().from(knowledgeDocuments).where(eq(knowledgeDocuments.id, documentId)).limit(1);
   const doc = rows[0];
   if (!doc) throw new NotFoundError("Documento no encontrado.");
@@ -143,12 +185,22 @@ export async function reindexDocument(documentId: string, actorId: string): Prom
   return { jobId: job.id };
 }
 
-export async function disableDocument(documentId: string, actorId: string): Promise<void> {
+export async function disableDocument(
+  documentId: string,
+  actorId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
+  await assertDocumentForOrganization(documentId, organizationId);
   await transitionDocument(documentId, "DISABLED");
   await recordAuditEvent({ actorId, action: "knowledge_document.disable", resourceType: "knowledge_document", resourceId: documentId });
 }
 
-export async function deleteDocument(documentId: string, actorId: string): Promise<void> {
+export async function deleteDocument(
+  documentId: string,
+  actorId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
+  await assertDocumentForOrganization(documentId, organizationId);
   const rows = await db.select().from(knowledgeDocuments).where(eq(knowledgeDocuments.id, documentId)).limit(1);
   const doc = rows[0];
   if (!doc) throw new NotFoundError("Documento no encontrado.");
@@ -162,7 +214,27 @@ export async function deleteDocument(documentId: string, actorId: string): Promi
   await recordAuditEvent({ actorId, action: "knowledge_document.delete", resourceType: "knowledge_document", resourceId: documentId });
 }
 
-export async function assertCanManageKnowledgeBase(knowledgeBaseId: string): Promise<void> {
-  const rows = await db.select({ id: knowledgeBases.id }).from(knowledgeBases).where(and(eq(knowledgeBases.id, knowledgeBaseId))).limit(1);
+export async function assertCanManageKnowledgeBase(
+  knowledgeBaseId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
+  const rows = await db
+    .select({ id: knowledgeBases.id })
+    .from(knowledgeBases)
+    .where(and(eq(knowledgeBases.id, knowledgeBaseId), eq(knowledgeBases.organizationId, organizationId)))
+    .limit(1);
   if (!rows[0]) throw new ForbiddenError("Base de conocimiento no encontrada.");
+}
+
+export async function assertDocumentForOrganization(
+  documentId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<void> {
+  const rows = await db
+    .select({ id: knowledgeDocuments.id })
+    .from(knowledgeDocuments)
+    .innerJoin(knowledgeBases, eq(knowledgeBases.id, knowledgeDocuments.knowledgeBaseId))
+    .where(and(eq(knowledgeDocuments.id, documentId), eq(knowledgeBases.organizationId, organizationId)))
+    .limit(1);
+  if (!rows[0]) throw new ForbiddenError("Documento no encontrado.");
 }

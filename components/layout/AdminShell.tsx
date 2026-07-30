@@ -8,6 +8,7 @@ import {
   BarChart3,
   Bell,
   Bot,
+  Building2,
   Boxes,
   BriefcaseBusiness,
   ChevronLeft,
@@ -26,6 +27,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { LogoutButton } from "./LogoutButton";
+import {
+  OrganizationSwitcher,
+  type OrganizationOption,
+} from "@/components/organizations/OrganizationSwitcher";
 
 interface NavItem {
   href: string;
@@ -43,6 +48,7 @@ const PRIMARY_NAV: NavItem[] = [
 ];
 
 const OPERATIONS_NAV: NavItem[] = [
+  { href: "/admin/organizations", label: "Organizaciones", icon: Building2 },
   { href: "/admin/providers", label: "Proveedores", icon: Database },
   { href: "/admin/evaluations", label: "Evaluaciones", icon: ClipboardCheck },
   { href: "/admin/jobs", label: "Trabajos", icon: BriefcaseBusiness },
@@ -85,7 +91,15 @@ function NavGroup({ items, pathname, onNavigate }: { items: NavItem[]; pathname:
   );
 }
 
-function Sidebar({ pathname, onNavigate }: { pathname: string; onNavigate: () => void }) {
+function Sidebar({
+  pathname,
+  onNavigate,
+  organizationName,
+}: {
+  pathname: string;
+  onNavigate: () => void;
+  organizationName: string;
+}) {
   return (
     <div className="flex h-full flex-col bg-[#071a23] text-white">
       <div className="flex h-16 items-center gap-3 border-b border-white/10 px-5">
@@ -94,7 +108,7 @@ function Sidebar({ pathname, onNavigate }: { pathname: string; onNavigate: () =>
         </span>
         <div className="min-w-0">
           <p className="text-base font-semibold">Bottali</p>
-          <p className="truncate text-[11px] text-slate-400">Consola administrativa</p>
+          <p className="truncate text-[11px] text-slate-400">{organizationName}</p>
         </div>
       </div>
 
@@ -126,9 +140,13 @@ function Sidebar({ pathname, onNavigate }: { pathname: string; onNavigate: () =>
 export function AdminShell({
   children,
   user,
+  activeOrganization,
+  organizations,
 }: {
   children: ReactNode;
   user: { email: string; displayName: string | null };
+  activeOrganization: { id: string; name: string };
+  organizations: OrganizationOption[];
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -143,7 +161,11 @@ export function AdminShell({
   return (
     <div className="min-h-screen bg-surface-subtle">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 lg:block">
-        <Sidebar pathname={pathname} onNavigate={() => undefined} />
+        <Sidebar
+          pathname={pathname}
+          onNavigate={() => undefined}
+          organizationName={activeOrganization.name}
+        />
       </aside>
 
       {mobileOpen && (
@@ -163,7 +185,11 @@ export function AdminShell({
             >
               <X className="h-5 w-5" aria-hidden="true" />
             </button>
-            <Sidebar pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+            <Sidebar
+              pathname={pathname}
+              onNavigate={() => setMobileOpen(false)}
+              organizationName={activeOrganization.name}
+            />
           </aside>
         </div>
       )}
@@ -181,8 +207,10 @@ export function AdminShell({
             </button>
             <span className="text-sm font-semibold text-ink sm:hidden">Bottali</span>
             <div className="hidden border-l border-border pl-4 sm:block lg:border-l-0 lg:pl-0">
-              <p className="text-[11px] text-ink-faint">Organización</p>
-              <p className="text-sm font-medium text-ink">Bottali</p>
+              <OrganizationSwitcher
+                activeOrganizationId={activeOrganization.id}
+                organizations={organizations}
+              />
             </div>
           </div>
 

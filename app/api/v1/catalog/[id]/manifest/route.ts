@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getToolById, loadVersionConfig } from "@/lib/tools/repository";
+import { getToolForOrganization, loadVersionConfig } from "@/lib/tools/repository";
 import { canUserAccessTool } from "@/lib/tools/access";
 import { requireCurrentUser } from "@/lib/auth/current-user";
 import { handleApiError } from "@/lib/validation/http";
@@ -15,9 +15,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   try {
     const user = await requireCurrentUser();
     const { id } = await params;
-    const tool = await getToolById(id);
+    const tool = await getToolForOrganization(id, user.organizationId);
     if (!tool.publishedVersionId) throw new NotFoundError("La herramienta no tiene una versión publicada.");
-    if (!(await canUserAccessTool(id, user.id))) throw new ForbiddenError("No tienes acceso a esta herramienta.");
+    if (!(await canUserAccessTool(id, user.id, user.organizationId))) {
+      throw new ForbiddenError("No tienes acceso a esta herramienta.");
+    }
 
     const config = await loadVersionConfig(tool.publishedVersionId);
     if (!config.pwaConfig || !config.capabilities?.pwa) {

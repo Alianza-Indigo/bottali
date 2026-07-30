@@ -12,7 +12,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const { id } = await params;
     const rows = await db.select().from(generatedFiles).where(eq(generatedFiles.id, id)).limit(1);
     const file = rows[0];
-    if (!file || file.deletedAt) throw new NotFoundError("Documento no encontrado.");
+    if (!file || file.organizationId !== user.organizationId || file.deletedAt) {
+      throw new NotFoundError("Documento no encontrado.");
+    }
     if (file.userId !== user.id) throw new ForbiddenError("No puedes ver este documento.");
     return NextResponse.json({
       file: {

@@ -33,6 +33,7 @@ import {
   getToolLLMProvider,
   toolHasProviderCredential,
 } from "@/lib/tools/provider-credentials";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 /** A document produced by generate_text_document during a turn, collected so
  * finalizeGeneration can persist it (§17/§36) once the assistant message it belongs to
@@ -59,6 +60,7 @@ const MAX_TOOL_ROUNDS = 4;
 export interface SendMessageParams {
   conversationId: string;
   userId: string;
+  organizationId?: string;
   content: string;
   signal: AbortSignal;
   /** File ids from a prior POST /files upload — gated by capabilities.files on the client;
@@ -74,8 +76,16 @@ interface ResolvedContext {
   providerKey: string;
 }
 
-async function resolveGenerationContext(conversationId: string, userId: string): Promise<ResolvedContext> {
-  const conversationRows = await db.select().from(conversations).where(eq(conversations.id, conversationId)).limit(1);
+async function resolveGenerationContext(
+  conversationId: string,
+  userId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<ResolvedContext> {
+  const conversationRows = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, conversationId), eq(conversations.organizationId, organizationId)))
+    .limit(1);
   const conversation = conversationRows[0];
   if (!conversation || conversation.deletedAt) throw new NotFoundError("Conversación no encontrada.");
   if (conversation.userId !== userId) throw new ForbiddenError("No puedes acceder a esta conversación.");
@@ -86,7 +96,7 @@ async function resolveGenerationContext(conversationId: string, userId: string):
   if (!tool || tool.status !== "PUBLISHED") {
     throw new AppError("Esta herramienta no está disponible actualmente.", "TOOL_UNAVAILABLE", 409);
   }
-  if (!(await canUserAccessTool(tool.id, userId))) {
+  if (!(await canUserAccessTool(tool.id, userId, conversation.organizationId))) {
     throw new ForbiddenError("No tienes acceso a esta herramienta.");
   }
 
@@ -409,6 +419,7 @@ async function* finalizeGeneration(p: FinalizeParams): AsyncGenerator<StreamEven
     for (const doc of p.generatedDocuments) {
       const file = await persistGeneratedDocument({
         userId,
+        organizationId: conversation.organizationId,
         toolId: tool.id,
         conversationId: conversation.id,
         messageId: assistantMessage.id,
@@ -766,7 +777,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
 
 /** §12 full pipeline for a new user turn: validate → moderate input → persist → generate. */
 export async function* sendMessage(params: SendMessageParams): AsyncGenerator<StreamEvent> {
-  const ctx = await resolveGenerationContext(params.conversationId, params.userId);
+  const ctx = await resolveGenerationContext(params.conversationId, params.userId, params.organizationId);
 
   // Flexible-by-design (§15): a pending confirmation on this conversation never blocks the
   // user from sending a new message — but the conversation has moved on, so that old pending
@@ -800,7 +811,13 @@ export async function* sendMessage(params: SendMessageParams): AsyncGenerator<St
   if (!userMessage) throw new Error("No fue posible guardar el mensaje del usuario.");
 
   if (ctx.config.capabilities?.files && params.attachedFileIds?.length) {
-    const attached = await attachFilesToMessage(params.attachedFileIds, params.userId, params.conversationId, userMessage.id);
+    const attached = await attachFilesToMessage(
+      params.attachedFileIds,
+      params.userId,
+      params.conversationId,
+      userMessage.id,
+      ctx.conversation.organizationId,
+    );
     if (attached.length > 0) {
       await db
         .update(messages)
@@ -823,6 +840,7 @@ export async function* sendMessage(params: SendMessageParams): AsyncGenerator<St
 export interface RegenerateParams {
   assistantMessageId: string;
   userId: string;
+  organizationId?: string;
   signal: AbortSignal;
 }
 
@@ -833,7 +851,7 @@ export async function* regenerateResponse(params: RegenerateParams): AsyncGenera
   const target = targetRows[0];
   if (!target || target.role !== "assistant") throw new NotFoundError("Mensaje no encontrado.");
 
-  const ctx = await resolveGenerationContext(target.conversationId, params.userId);
+  const ctx = await resolveGenerationContext(target.conversationId, params.userId, params.organizationId);
 
   const precedingRows = await db
     .select({ id: messages.id, content: messages.content, createdAt: messages.createdAt })
@@ -860,6 +878,7 @@ export async function* regenerateResponse(params: RegenerateParams): AsyncGenera
 export interface ResolveToolConfirmationParams {
   confirmationId: string;
   userId: string;
+  organizationId?: string;
   decision: "approve" | "reject";
   signal: AbortSignal;
   /** Only meaningful when the paused tool is collect_form_input (§ capacidad forms) and
@@ -876,6 +895,10 @@ export interface ResolveToolConfirmationParams {
  * a human approving an action is a genuinely separate request, potentially minutes later.
  */
 export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmationParams): AsyncGenerator<StreamEvent> {
+  const candidate = await getConfirmationById(params.confirmationId);
+  if (!candidate) throw new NotFoundError("Confirmación no encontrada.");
+  await resolveGenerationContext(candidate.conversationId, params.userId, params.organizationId);
+
   // Atomic claim (§15 concurrency fix): a plain read-then-check-then-write here would let
   // two concurrent approve requests both observe PENDING and both execute the tool. The
   // UPDATE...WHERE status='PENDING'...RETURNING is the actual mutual-exclusion boundary —
@@ -898,7 +921,7 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
     throw new AppError("Esta confirmación expiró; el turno ya no puede reanudarse.", "CONFIRMATION_EXPIRED", 409);
   }
 
-  const ctx = await resolveGenerationContext(confirmation.conversationId, params.userId);
+  const ctx = await resolveGenerationContext(confirmation.conversationId, params.userId, params.organizationId);
   const { conversation, tool, config, model } = ctx;
   const provider = await getToolLLMProvider(tool.id, ctx.providerKey);
   const context = { userId: params.userId, conversationId: conversation.id, toolId: tool.id };

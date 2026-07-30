@@ -24,8 +24,23 @@ export async function getToolById(toolId: string, executor: Tx = db) {
   return tool;
 }
 
-export async function getToolBySlug(slug: string, executor: Tx = db) {
-  const rows = await executor.select().from(tools).where(eq(tools.slug, slug)).limit(1);
+export async function getToolForOrganization(toolId: string, organizationId: string, executor: Tx = db) {
+  const rows = await executor
+    .select()
+    .from(tools)
+    .where(and(eq(tools.id, toolId), eq(tools.organizationId, organizationId)))
+    .limit(1);
+  const tool = rows[0];
+  if (!tool) throw new NotFoundError("Herramienta no encontrada.");
+  return tool;
+}
+
+export async function getToolBySlug(slug: string, organizationId: string, executor: Tx = db) {
+  const rows = await executor
+    .select()
+    .from(tools)
+    .where(and(eq(tools.organizationId, organizationId), eq(tools.slug, slug)))
+    .limit(1);
   return rows[0] ?? null;
 }
 
@@ -133,8 +148,12 @@ export async function findDraftVersion(toolId: string, executor: Tx = db) {
   return rows[0] ?? null;
 }
 
-export async function listAdminTools(executor: Tx = db) {
-  const rows = await executor.select().from(tools).orderBy(desc(tools.createdAt));
+export async function listAdminTools(organizationId: string, executor: Tx = db) {
+  const rows = await executor
+    .select()
+    .from(tools)
+    .where(eq(tools.organizationId, organizationId))
+    .orderBy(desc(tools.createdAt));
   const versionIds = rows.map((tool) => tool.draftVersionId ?? tool.publishedVersionId).filter((id): id is string => Boolean(id));
   const brandingRows =
     versionIds.length > 0
@@ -151,9 +170,9 @@ export async function listAdminTools(executor: Tx = db) {
   });
 }
 
-export async function getAdminToolBuilderData(toolId: string, executor: Tx = db) {
+export async function getAdminToolBuilderData(toolId: string, organizationId: string, executor: Tx = db) {
   const [tool, versions, modelProviders] = await Promise.all([
-    getToolById(toolId, executor),
+    getToolForOrganization(toolId, organizationId, executor),
     executor.select().from(toolVersions).where(eq(toolVersions.toolId, toolId)),
     executor.select().from(providers),
   ]);

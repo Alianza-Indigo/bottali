@@ -21,7 +21,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 
     const conversationRows = await db.select().from(conversations).where(eq(conversations.id, id)).limit(1);
     const conversation = conversationRows[0];
-    if (!conversation) throw new NotFoundError("Conversación no encontrada.");
+    if (!conversation || conversation.organizationId !== user.organizationId) {
+      throw new NotFoundError("Conversación no encontrada.");
+    }
     if (conversation.userId !== user.id) throw new ForbiddenError("No puedes acceder a esta conversación.");
 
     const stuck = await db

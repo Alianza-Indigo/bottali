@@ -8,7 +8,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   try {
     const user = await requireCurrentUser();
     const { id } = await params;
-    await deactivateToolForUser(id, user.id);
+    await deactivateToolForUser(id, user.id, user.organizationId);
     await recordAuditEvent({ actorId: user.id, action: "catalog.tool.deactivate", resourceType: "tool", resourceId: id });
     return NextResponse.json({ message: "Herramienta desactivada." });
   } catch (error) {

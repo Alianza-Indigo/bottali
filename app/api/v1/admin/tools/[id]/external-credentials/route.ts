@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUserWithPermission } from "@/lib/permissions/require";
+import { getToolForOrganization } from "@/lib/tools/repository";
 import {
   listToolExternalCredentials,
   saveToolExternalCredential,
@@ -9,8 +10,9 @@ import { externalCredentialInputSchema } from "@/lib/validation/tools";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireUserWithPermission("tools.credentials.manage");
+    const user = await requireUserWithPermission("tools.credentials.manage");
     const { id } = await params;
+    await getToolForOrganization(id, user.organizationId);
     const credentials = await listToolExternalCredentials(id);
     return NextResponse.json({
       credentials: credentials.map((credential) => ({
@@ -27,6 +29,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const user = await requireUserWithPermission("tools.credentials.manage");
     const { id } = await params;
+    await getToolForOrganization(id, user.organizationId);
     const credential = await parseJsonBody(request, externalCredentialInputSchema);
     const credentialId = await saveToolExternalCredential({
       toolId: id,

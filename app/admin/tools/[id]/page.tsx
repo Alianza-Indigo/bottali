@@ -14,12 +14,12 @@ export default async function AdminToolDetailPage({ params }: { params: Promise<
   const { id } = await params;
   const user = await requireCurrentUser();
 
-  const permissions = await getUserPermissions(user.id);
+  const permissions = await getUserPermissions(user.id, user.organizationId);
   if (!permissions.has("tools.update")) notFound();
   const draftVersionId = await ensureEditableDraftVersion(id, user.id).catch(() => null);
   if (!draftVersionId) notFound();
 
-  const builderData = await getAdminToolBuilderData(id).catch(() => null);
+  const builderData = await getAdminToolBuilderData(id, user.organizationId).catch(() => null);
   if (!builderData) notFound();
   const { tool, versions, modelProviders } = builderData;
   const canManageCredentials = permissions.has("tools.credentials.manage");

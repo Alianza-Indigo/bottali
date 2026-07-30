@@ -6,6 +6,6 @@ import type { SessionUser } from "@/lib/auth/session";
 /** Convenience for route handlers: authenticate, then check one server-side permission. */
 export async function requireUserWithPermission(permission: PermissionKey): Promise<SessionUser> {
   const user = await requireCurrentUser();
-  await requirePermission(user.id, permission);
+  await requirePermission(user.id, permission, user.organizationId);
   return user;
 }

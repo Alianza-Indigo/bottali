@@ -21,11 +21,15 @@ import {
   toolVersionStatusEnum,
 } from "./enums";
 import { providerModels, providers } from "./providers";
+import { organizations } from "./tenants";
 
 export const tools = pgTable(
   "tools",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
     slug: varchar("slug", { length: 80 }).notNull(),
     category: varchar("category", { length: 64 }),
     responsibleUserId: uuid("responsible_user_id").references(() => users.id, {
@@ -41,7 +45,8 @@ export const tools = pgTable(
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex("tools_slug_idx").on(table.slug),
+    uniqueIndex("tools_organization_slug_idx").on(table.organizationId, table.slug),
+    index("tools_organization_idx").on(table.organizationId),
     index("tools_status_idx").on(table.status),
   ],
 );

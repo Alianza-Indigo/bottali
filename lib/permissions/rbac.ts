@@ -1,6 +1,12 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { permissions, rolePermissions, roles, userRoles } from "@/db/schema";
+import {
+  organizationMemberRoles,
+  permissions,
+  rolePermissions,
+  roles,
+  userRoles,
+} from "@/db/schema";
 import { ForbiddenError } from "@/lib/utils/errors";
 import type { PermissionKey, RoleKey } from "./definitions";
 
@@ -13,24 +19,53 @@ export async function getUserRoleKeys(userId: string): Promise<RoleKey[]> {
   return rows.map((r) => r.key as RoleKey);
 }
 
-export async function getUserPermissions(userId: string): Promise<Set<PermissionKey>> {
-  const rows = await db
+export async function getUserPermissions(
+  userId: string,
+  organizationId?: string,
+): Promise<Set<PermissionKey>> {
+  const platformRows = await db
     .select({ key: permissions.key })
     .from(userRoles)
     .innerJoin(rolePermissions, eq(rolePermissions.roleId, userRoles.roleId))
     .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
     .where(eq(userRoles.userId, userId));
-  return new Set(rows.map((r) => r.key as PermissionKey));
+  const tenantRows = organizationId
+    ? await db
+        .select({ key: permissions.key })
+        .from(organizationMemberRoles)
+        .innerJoin(
+          rolePermissions,
+          eq(rolePermissions.roleId, organizationMemberRoles.roleId),
+        )
+        .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
+        .where(
+          and(
+            eq(organizationMemberRoles.userId, userId),
+            eq(organizationMemberRoles.organizationId, organizationId),
+          ),
+        )
+    : [];
+  return new Set(
+    [...platformRows, ...tenantRows].map((row) => row.key as PermissionKey),
+  );
 }
 
-export async function hasPermission(userId: string, permission: PermissionKey): Promise<boolean> {
-  const perms = await getUserPermissions(userId);
+export async function hasPermission(
+  userId: string,
+  permission: PermissionKey,
+  organizationId?: string,
+): Promise<boolean> {
+  const perms = await getUserPermissions(userId, organizationId);
   return perms.has(permission);
 }
 
 /** Throws ForbiddenError server-side. Never trust a permission flag sent by the client. */
-export async function requirePermission(userId: string, permission: PermissionKey): Promise<void> {
-  const allowed = await hasPermission(userId, permission);
+export async function requirePermission(
+  userId: string,
+  permission: PermissionKey,
+  organizationId?: string,
+): Promise<void> {
+  const allowed = await hasPermission(userId, permission, organizationId);
   if (!allowed) {
     throw new ForbiddenError(`Falta el permiso requerido: ${permission}`);
   }

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { evaluationCases, evaluationResults, evaluationRuns, evaluationSuites, tools } from "@/db/schema";
 import { runToolTest } from "@/lib/tools/test-run";
@@ -13,6 +13,18 @@ export interface CreateSuiteInput {
   criteria: string[];
   isMandatoryForPublish: boolean;
   actorId: string;
+}
+
+export async function getEvaluationSuiteForOrganization(suiteId: string, organizationId: string) {
+  const rows = await db
+    .select({ suite: evaluationSuites })
+    .from(evaluationSuites)
+    .innerJoin(tools, eq(tools.id, evaluationSuites.toolId))
+    .where(and(eq(evaluationSuites.id, suiteId), eq(tools.organizationId, organizationId)))
+    .limit(1);
+  const suite = rows[0]?.suite;
+  if (!suite) throw new NotFoundError("Suite de evaluación no encontrada.");
+  return suite;
 }
 
 /**

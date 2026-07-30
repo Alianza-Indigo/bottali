@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db/client";
 import { toolBranding, toolCapabilities, tools } from "@/db/schema";
@@ -11,7 +11,11 @@ export default async function ToolDetailPage({ params }: { params: Promise<{ slu
   const { slug } = await params;
   const user = await requireCurrentUser();
 
-  const toolRows = await db.select().from(tools).where(eq(tools.slug, slug)).limit(1);
+  const toolRows = await db
+    .select()
+    .from(tools)
+    .where(and(eq(tools.organizationId, user.organizationId), eq(tools.slug, slug)))
+    .limit(1);
   const tool = toolRows[0];
   if (!tool || tool.status !== "PUBLISHED" || !tool.publishedVersionId) notFound();
 
@@ -19,7 +23,7 @@ export default async function ToolDetailPage({ params }: { params: Promise<{ slu
   const [capabilities] = await db.select().from(toolCapabilities).where(eq(toolCapabilities.toolVersionId, tool.publishedVersionId)).limit(1);
   if (!branding) notFound();
 
-  const state = await resolveCatalogState({ toolId: tool.id, userId: user.id });
+  const state = await resolveCatalogState({ toolId: tool.id, userId: user.id, organizationId: user.organizationId });
 
   return (
     <div className="mx-auto max-w-2xl">

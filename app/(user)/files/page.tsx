@@ -20,7 +20,13 @@ export default async function FilesPage() {
   const files = await db
     .select()
     .from(uploadedFiles)
-    .where(and(eq(uploadedFiles.userId, user.id), isNull(uploadedFiles.deletedAt)))
+    .where(
+      and(
+        eq(uploadedFiles.organizationId, user.organizationId),
+        eq(uploadedFiles.userId, user.id),
+        isNull(uploadedFiles.deletedAt),
+      ),
+    )
     .orderBy(desc(uploadedFiles.createdAt))
     .limit(100);
 

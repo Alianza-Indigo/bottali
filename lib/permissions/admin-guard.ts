@@ -15,8 +15,8 @@ const ANY_ADMIN_PERMISSION: PermissionKey[] = [
   "settings.manage",
 ];
 
-export async function canAccessAdminPanel(userId: string): Promise<boolean> {
-  const permissions = await getUserPermissions(userId);
+export async function canAccessAdminPanel(userId: string, organizationId?: string): Promise<boolean> {
+  const permissions = await getUserPermissions(userId, organizationId);
   return ANY_ADMIN_PERMISSION.some((permission) => permissions.has(permission));
 }
 
@@ -28,7 +28,7 @@ export async function requireAdminAccess() {
   const session = await getCurrentSession();
   if (!session) redirect("/login");
 
-  const permissions = await getUserPermissions(session.id);
+  const permissions = await getUserPermissions(session.id, session.organizationId);
   const hasAnyAdminPermission = ANY_ADMIN_PERMISSION.some((permission) => permissions.has(permission));
   if (!hasAnyAdminPermission) redirect("/dashboard");
 

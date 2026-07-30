@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireCurrentUser();
     const body = await parseJsonBody(request, schema);
-    const result = await initiateUpload({ userId: user.id, ...body });
+    const result = await initiateUpload({ userId: user.id, organizationId: user.organizationId, ...body });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     return handleApiError(error);

@@ -17,7 +17,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const arrayBuffer = await request.arrayBuffer();
     if (arrayBuffer.byteLength === 0) throw new ValidationError("El cuerpo de la solicitud no contiene datos de archivo.");
 
-    await completeUpload(id, user.id, Buffer.from(arrayBuffer));
+    await completeUpload(id, user.id, Buffer.from(arrayBuffer), user.organizationId);
     return NextResponse.json({ message: "Carga completada." });
   } catch (error) {
     return handleApiError(error);

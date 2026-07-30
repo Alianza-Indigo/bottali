@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     if (!rl.allowed) throw new RateLimitError();
 
     const body = await parseJsonBody(request, schema);
-    await requireToolRuntimeCapability(body.toolId, user.id, "voiceOutput");
+    await requireToolRuntimeCapability(body.toolId, user.id, user.organizationId, "voiceOutput");
     const availability = await getToolVoiceAvailability(body.toolId);
     if (!availability.output) {
       throw new ForbiddenError("La salida de voz no tiene un proveedor configurado.");

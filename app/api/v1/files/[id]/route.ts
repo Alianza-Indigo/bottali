@@ -13,7 +13,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const { id } = await params;
     const rows = await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, id)).limit(1);
     const file = rows[0];
-    if (!file || file.deletedAt) throw new NotFoundError("Archivo no encontrado.");
+    if (!file || file.organizationId !== user.organizationId || file.deletedAt) {
+      throw new NotFoundError("Archivo no encontrado.");
+    }
     if (file.userId !== user.id) throw new ForbiddenError("No puedes ver este archivo.");
     return NextResponse.json({
       file: {
@@ -34,7 +36,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   try {
     const user = await requireCurrentUser();
     const { id } = await params;
-    await deleteUploadedFile(id, user.id);
+    await deleteUploadedFile(id, user.id, user.organizationId);
     return NextResponse.json({ message: "Archivo eliminado." });
   } catch (error) {
     return handleApiError(error);

@@ -16,7 +16,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const user = await requireUserWithPermission("knowledge.manage");
     const { id } = await params;
     const body = await parseJsonBody(request, schema);
-    const result = await initiateDocumentUpload({ knowledgeBaseId: id, actorId: user.id, ...body });
+    const result = await initiateDocumentUpload({
+      knowledgeBaseId: id,
+      organizationId: user.organizationId,
+      actorId: user.id,
+      ...body,
+    });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     return handleApiError(error);

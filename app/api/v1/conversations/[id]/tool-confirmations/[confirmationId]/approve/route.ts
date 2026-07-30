@@ -34,6 +34,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           for await (const event of resumeAfterToolConfirmation({
             confirmationId,
             userId: user.id,
+            organizationId: user.organizationId,
             decision: "approve",
             formAnswers,
             signal: request.signal,

@@ -7,7 +7,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   try {
     const user = await requireUserWithPermission("knowledge.manage");
     const { id } = await params;
-    await deleteDocument(id, user.id);
+    await deleteDocument(id, user.id, user.organizationId);
     return NextResponse.json({ message: "Documento eliminado." });
   } catch (error) {
     return handleApiError(error);

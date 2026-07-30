@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUserWithPermission } from "@/lib/permissions/require";
+import { getToolForOrganization } from "@/lib/tools/repository";
 import { markVersionUnderReview } from "@/lib/tools/service";
 import { getVersionForTool } from "@/lib/tools/repository";
 import { handleApiError } from "@/lib/validation/http";
@@ -8,6 +9,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   try {
     const user = await requireUserWithPermission("tools.review");
     const { id, versionId } = await params;
+    await getToolForOrganization(id, user.organizationId);
     await getVersionForTool(id, versionId);
     await markVersionUnderReview(versionId, user.id);
     return NextResponse.json({ message: "Versión enviada a revisión." });

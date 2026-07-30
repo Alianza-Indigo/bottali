@@ -10,6 +10,7 @@ import { getJobProvider } from "@/lib/jobs";
 import { activateToolForUser } from "@/lib/tools/access";
 import { createConversation } from "@/lib/conversations/service";
 import { createPublishedTestTool } from "../fixtures/tool-factory";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 /**
  * Covers one of the two gaps a docs/privacy.md research pass surfaced (and this session was
@@ -47,6 +48,7 @@ describe("account.process_deletion job", () => {
     // that helper reads/writes next/headers' cookies(), which only works inside a real
     // request scope, not a plain vitest integration test.
     await db.insert(sessions).values({
+      organizationId: DEFAULT_ORGANIZATION_ID,
       userId,
       tokenHash: hashToken(generateOpaqueToken()),
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),

@@ -26,12 +26,21 @@ export default async function ToolHistoryPage({
   const page = Math.max(1, Number(pageParam) || 1);
   const user = await requireCurrentUser();
 
-  const toolRows = await db.select().from(tools).where(eq(tools.slug, slug)).limit(1);
+  const toolRows = await db
+    .select()
+    .from(tools)
+    .where(and(eq(tools.organizationId, user.organizationId), eq(tools.slug, slug)))
+    .limit(1);
   const tool = toolRows[0];
   if (!tool || tool.status !== "PUBLISHED" || !tool.publishedVersionId) notFound();
-  if (!(await canUserAccessTool(tool.id, user.id))) redirect(`/tools/${slug}`);
+  if (!(await canUserAccessTool(tool.id, user.id, user.organizationId))) redirect(`/tools/${slug}`);
 
-  const whereClause = and(eq(conversations.userId, user.id), eq(conversations.toolId, tool.id), eq(conversations.status, "ARCHIVED"));
+  const whereClause = and(
+    eq(conversations.organizationId, user.organizationId),
+    eq(conversations.userId, user.id),
+    eq(conversations.toolId, tool.id),
+    eq(conversations.status, "ARCHIVED"),
+  );
 
   const archived = await db
     .select({ id: conversations.id, title: conversations.title, archivedAt: conversations.archivedAt })

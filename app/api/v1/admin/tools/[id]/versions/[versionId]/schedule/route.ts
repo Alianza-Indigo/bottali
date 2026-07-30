@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUserWithPermission } from "@/lib/permissions/require";
+import { getToolForOrganization } from "@/lib/tools/repository";
 import { publishVersion } from "@/lib/tools/service";
 import { getVersionForTool } from "@/lib/tools/repository";
 import { parseJsonBody, handleApiError } from "@/lib/validation/http";
@@ -12,6 +13,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const user = await requireUserWithPermission("tools.publish");
     const { id, versionId } = await params;
+    await getToolForOrganization(id, user.organizationId);
     await getVersionForTool(id, versionId);
     const { scheduledFor } = await parseJsonBody(request, schema);
     const date = new Date(scheduledFor);

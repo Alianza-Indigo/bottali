@@ -12,7 +12,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          for await (const event of regenerateResponse({ assistantMessageId: id, userId: user.id, signal: request.signal })) {
+          for await (const event of regenerateResponse({
+            assistantMessageId: id,
+            userId: user.id,
+            organizationId: user.organizationId,
+            signal: request.signal,
+          })) {
             controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
           }
         } catch (error) {

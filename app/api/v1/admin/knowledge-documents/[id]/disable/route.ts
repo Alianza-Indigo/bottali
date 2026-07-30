@@ -7,7 +7,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   try {
     const user = await requireUserWithPermission("knowledge.manage");
     const { id } = await params;
-    await disableDocument(id, user.id);
+    await disableDocument(id, user.id, user.organizationId);
     return NextResponse.json({ message: "Documento deshabilitado." });
   } catch (error) {
     return handleApiError(error);

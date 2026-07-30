@@ -12,7 +12,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const user = await requireCurrentUser();
     const { id } = await params;
     const { reason } = await parseOptionalJsonBody(request, schema);
-    await requestToolAccess(id, user.id, reason);
+    await requestToolAccess(id, user.id, reason, user.organizationId);
     await recordAuditEvent({ actorId: user.id, action: "catalog.tool.request_access", resourceType: "tool", resourceId: id });
     return NextResponse.json({ message: "Solicitud de acceso enviada." });
   } catch (error) {

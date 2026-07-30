@@ -7,7 +7,7 @@ export const metadata = { title: "Catálogo" };
 
 export default async function CatalogPage() {
   const user = await requireCurrentUser();
-  const catalogItems = await getCatalogItems(user.id);
+  const catalogItems = await getCatalogItems(user.id, user.organizationId);
 
   const items = catalogItems.map((item) => ({
     id: item.id,

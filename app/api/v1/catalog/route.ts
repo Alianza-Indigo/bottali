@@ -6,7 +6,7 @@ import { handleApiError } from "@/lib/validation/http";
 export async function GET() {
   try {
     const user = await requireCurrentUser();
-    const items = await getCatalogItems(user.id);
+    const items = await getCatalogItems(user.id, user.organizationId);
     return NextResponse.json({ tools: items });
   } catch (error) {
     return handleApiError(error);

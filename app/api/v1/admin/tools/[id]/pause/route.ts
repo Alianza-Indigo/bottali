@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUserWithPermission } from "@/lib/permissions/require";
+import { getToolForOrganization } from "@/lib/tools/repository";
 import { pauseTool } from "@/lib/tools/service";
 import { parseJsonBody, handleApiError } from "@/lib/validation/http";
 
@@ -10,6 +11,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const user = await requireUserWithPermission("tools.pause");
     const { id } = await params;
+    await getToolForOrganization(id, user.organizationId);
     const { reason } = await parseJsonBody(request, schema).catch(() => ({ reason: undefined }));
     await pauseTool(id, user.id, reason);
     return NextResponse.json({ message: "Herramienta pausada." });

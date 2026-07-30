@@ -7,11 +7,13 @@ import { AdminPageHeader, AdminPanel } from "@/components/admin/AdminPage";
 import { DuplicateToolButton } from "@/components/admin/tools/DuplicateToolButton";
 import { listAdminTools } from "@/lib/tools/repository";
 import { getPublicationStatusTone, getVisibleToolStatus } from "@/lib/tools/presentation";
+import { requireCurrentUser } from "@/lib/auth/current-user";
 
 export const metadata = { title: "Herramientas — Admin" };
 
 export default async function AdminToolsPage() {
-  const withNames = await listAdminTools();
+  const admin = await requireCurrentUser();
+  const withNames = await listAdminTools(admin.organizationId);
 
   return (
     <div className="flex flex-col gap-6">

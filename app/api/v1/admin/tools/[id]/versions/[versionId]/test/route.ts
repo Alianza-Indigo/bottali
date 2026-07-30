@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUserWithPermission } from "@/lib/permissions/require";
+import { getToolForOrganization } from "@/lib/tools/repository";
 import { markVersionTesting } from "@/lib/tools/service";
 import { runToolTest } from "@/lib/tools/test-run";
 import { getVersionForTool } from "@/lib/tools/repository";
@@ -12,6 +13,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const user = await requireUserWithPermission("tools.update");
     const { id, versionId } = await params;
+    await getToolForOrganization(id, user.organizationId);
     await getVersionForTool(id, versionId);
     const { message } = await parseJsonBody(request, schema);
 

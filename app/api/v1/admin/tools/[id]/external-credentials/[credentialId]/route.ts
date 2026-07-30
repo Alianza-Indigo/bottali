@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUserWithPermission } from "@/lib/permissions/require";
+import { getToolForOrganization } from "@/lib/tools/repository";
 import {
   deleteToolExternalCredential,
   saveToolExternalCredential,
@@ -14,6 +15,7 @@ export async function PUT(
   try {
     const user = await requireUserWithPermission("tools.credentials.manage");
     const { id, credentialId } = await params;
+    await getToolForOrganization(id, user.organizationId);
     const credential = await parseJsonBody(request, externalCredentialInputSchema);
     await saveToolExternalCredential({
       toolId: id,
@@ -34,6 +36,7 @@ export async function DELETE(
   try {
     const user = await requireUserWithPermission("tools.credentials.manage");
     const { id, credentialId } = await params;
+    await getToolForOrganization(id, user.organizationId);
     await deleteToolExternalCredential({ toolId: id, credentialId, actorId: user.id });
     return NextResponse.json({ message: "Credencial externa eliminada." });
   } catch (error) {

@@ -11,19 +11,27 @@ import {
 import { users } from "./auth";
 import { tools } from "./tools";
 import { knowledgeDocumentStatusEnum } from "./enums";
+import { organizations } from "./tenants";
 
-export const knowledgeBases = pgTable("knowledge_bases", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  toolId: uuid("tool_id").references(() => tools.id, { onDelete: "cascade" }),
-  name: varchar("name", { length: 120 }).notNull(),
-  description: text("description"),
-  language: varchar("language", { length: 10 }).notNull().default("es"),
-  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  disabledAt: timestamp("disabled_at", { withTimezone: true }),
-  deletedAt: timestamp("deleted_at", { withTimezone: true }),
-});
+export const knowledgeBases = pgTable(
+  "knowledge_bases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    toolId: uuid("tool_id").references(() => tools.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 120 }).notNull(),
+    description: text("description"),
+    language: varchar("language", { length: 10 }).notNull().default("es"),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => [index("knowledge_bases_organization_idx").on(table.organizationId)],
+);
 
 export const knowledgeDocuments = pgTable(
   "knowledge_documents",

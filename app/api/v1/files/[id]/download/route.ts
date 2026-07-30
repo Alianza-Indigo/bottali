@@ -11,7 +11,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   try {
     const user = await requireCurrentUser();
     const { id } = await params;
-    const { buffer, mimeType, originalName } = await getFileForDownload(id, user.id);
+    const { buffer, mimeType, originalName } = await getFileForDownload(id, user.id, user.organizationId);
 
     return new Response(new Uint8Array(buffer), {
       headers: {

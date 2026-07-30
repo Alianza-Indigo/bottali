@@ -19,11 +19,15 @@ import {
   messageStatusEnum,
   toolCallConfirmationStatusEnum,
 } from "./enums";
+import { organizations } from "./tenants";
 
 export const conversations = pgTable(
   "conversations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -44,6 +48,7 @@ export const conversations = pgTable(
   },
   (table) => [
     index("conversations_user_idx").on(table.userId),
+    index("conversations_organization_idx").on(table.organizationId),
     index("conversations_tool_idx").on(table.toolId),
     index("conversations_status_idx").on(table.status),
     index("conversations_user_status_idx").on(table.userId, table.status),

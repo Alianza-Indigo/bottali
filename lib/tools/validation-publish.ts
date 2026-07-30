@@ -113,8 +113,12 @@ export async function validateVersionForPublish(toolVersionId: string): Promise<
   return { valid: errors.length === 0, errors };
 }
 
-export async function assertSlugAvailable(slug: string, excludeToolId?: string): Promise<void> {
-  const rows = await db.select({ id: tools.id }).from(tools).where(eq(tools.slug, slug)).limit(1);
+export async function assertSlugAvailable(slug: string, organizationId: string, excludeToolId?: string): Promise<void> {
+  const rows = await db
+    .select({ id: tools.id })
+    .from(tools)
+    .where(and(eq(tools.organizationId, organizationId), eq(tools.slug, slug)))
+    .limit(1);
   if (rows[0] && rows[0].id !== excludeToolId) {
     throw new ConflictError(`El slug "${slug}" ya está en uso.`);
   }

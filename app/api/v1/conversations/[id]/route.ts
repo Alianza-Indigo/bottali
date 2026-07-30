@@ -10,7 +10,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   try {
     const user = await requireCurrentUser();
     const { id } = await params;
-    const result = await getConversationWithMessages(id, user.id);
+    const result = await getConversationWithMessages(id, user.id, user.organizationId);
     return NextResponse.json(result);
   } catch (error) {
     return handleApiError(error);
@@ -22,7 +22,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const user = await requireCurrentUser();
     const { id } = await params;
     const { title } = await parseJsonBody(request, patchSchema);
-    await renameConversation(id, user.id, title);
+    await renameConversation(id, user.id, title, user.organizationId);
     return NextResponse.json({ message: "Conversación renombrada." });
   } catch (error) {
     return handleApiError(error);
@@ -33,7 +33,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   try {
     const user = await requireCurrentUser();
     const { id } = await params;
-    await deleteConversation(id, user.id);
+    await deleteConversation(id, user.id, user.organizationId);
     return NextResponse.json({ message: "Conversación eliminada." });
   } catch (error) {
     return handleApiError(error);

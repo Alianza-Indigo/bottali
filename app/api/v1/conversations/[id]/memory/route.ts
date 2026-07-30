@@ -7,7 +7,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   try {
     const user = await requireCurrentUser();
     const { id } = await params;
-    await clearConversationMemory(id, user.id);
+    await clearConversationMemory(id, user.id, user.organizationId);
     return NextResponse.json({ message: "Memoria de la conversación eliminada." });
   } catch (error) {
     return handleApiError(error);

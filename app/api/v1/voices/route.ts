@@ -11,7 +11,7 @@ export async function GET(request: Request) {
     const parsedToolId = z.string().uuid().safeParse(new URL(request.url).searchParams.get("toolId"));
     if (!parsedToolId.success) return NextResponse.json({ voices: [] });
 
-    await requireToolRuntimeCapability(parsedToolId.data, user.id, "voiceOutput");
+    await requireToolRuntimeCapability(parsedToolId.data, user.id, user.organizationId, "voiceOutput");
     const availability = await getToolVoiceAvailability(parsedToolId.data);
     if (!availability.output) return NextResponse.json({ voices: [] });
 

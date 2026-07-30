@@ -17,12 +17,24 @@ export default async function DashboardPage() {
       .from(toolActivations)
       .innerJoin(tools, eq(tools.id, toolActivations.toolId))
       .innerJoin(toolBranding, eq(toolBranding.toolVersionId, tools.publishedVersionId))
-      .where(and(eq(toolActivations.userId, user.id), isNull(toolActivations.deactivatedAt)))
+      .where(
+        and(
+          eq(tools.organizationId, user.organizationId),
+          eq(toolActivations.userId, user.id),
+          isNull(toolActivations.deactivatedAt),
+        ),
+      )
       .limit(6),
     db
       .select({ id: conversations.id, title: conversations.title, toolId: conversations.toolId, lastMessageAt: conversations.lastMessageAt })
       .from(conversations)
-      .where(and(eq(conversations.userId, user.id), eq(conversations.status, "ACTIVE")))
+      .where(
+        and(
+          eq(conversations.organizationId, user.organizationId),
+          eq(conversations.userId, user.id),
+          eq(conversations.status, "ACTIVE"),
+        ),
+      )
       .orderBy(desc(conversations.lastMessageAt))
       .limit(5),
     db

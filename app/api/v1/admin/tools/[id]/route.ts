@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { tools } from "@/db/schema";
 import { requireUserWithPermission } from "@/lib/permissions/require";
-import { getToolById, loadVersionConfig } from "@/lib/tools/repository";
+import { getToolForOrganization, loadVersionConfig } from "@/lib/tools/repository";
 import { parseJsonBody, handleApiError } from "@/lib/validation/http";
 import { recordAuditEvent } from "@/lib/audit/log";
 
@@ -16,9 +16,9 @@ const updateToolSchema = z.object({
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireUserWithPermission("tools.read");
+    const user = await requireUserWithPermission("tools.read");
     const { id } = await params;
-    const tool = await getToolById(id);
+    const tool = await getToolForOrganization(id, user.organizationId);
     const editableVersionId = tool.draftVersionId ?? tool.publishedVersionId;
     const config = editableVersionId ? await loadVersionConfig(editableVersionId) : null;
     return NextResponse.json({ tool, editableVersionId, config });
@@ -32,7 +32,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const user = await requireUserWithPermission("tools.update");
     const { id } = await params;
     const body = await parseJsonBody(request, updateToolSchema);
-    await getToolById(id);
+    await getToolForOrganization(id, user.organizationId);
     await db.update(tools).set({ ...body, updatedAt: new Date() }).where(eq(tools.id, id));
     await recordAuditEvent({ actorId: user.id, action: "tool.update.metadata", resourceType: "tool", resourceId: id });
     return NextResponse.json({ message: "Herramienta actualizada." });

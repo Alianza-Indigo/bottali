@@ -29,7 +29,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          for await (const event of sendMessage({ conversationId: id, userId: user!.id, content, attachedFileIds, signal: request.signal })) {
+          for await (const event of sendMessage({
+            conversationId: id,
+            userId: user!.id,
+            organizationId: user!.organizationId,
+            content,
+            attachedFileIds,
+            signal: request.signal,
+          })) {
             controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
           }
         } catch (error) {

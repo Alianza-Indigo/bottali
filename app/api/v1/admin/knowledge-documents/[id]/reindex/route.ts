@@ -7,7 +7,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   try {
     const user = await requireUserWithPermission("knowledge.manage");
     const { id } = await params;
-    const result = await reindexDocument(id, user.id);
+    const result = await reindexDocument(id, user.id, user.organizationId);
     return NextResponse.json(result);
   } catch (error) {
     return handleApiError(error);

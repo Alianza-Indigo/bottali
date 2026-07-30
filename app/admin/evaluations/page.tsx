@@ -6,12 +6,24 @@ import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CreateSuiteForm } from "@/components/admin/evaluations/CreateSuiteForm";
 import { AdminPageHeader, AdminPanel } from "@/components/admin/AdminPage";
+import { requireCurrentUser } from "@/lib/auth/current-user";
+import { eq } from "drizzle-orm";
 
 export const metadata = { title: "Evaluaciones — Admin" };
 
 export default async function AdminEvaluationsPage() {
-  const suites = await db.select().from(evaluationSuites);
-  const toolRows = await db.select({ id: tools.id, slug: tools.slug }).from(tools);
+  const admin = await requireCurrentUser();
+  const toolRows = await db
+    .select({ id: tools.id, slug: tools.slug })
+    .from(tools)
+    .where(eq(tools.organizationId, admin.organizationId));
+  const suites = (
+    await db
+      .select({ suite: evaluationSuites })
+      .from(evaluationSuites)
+      .innerJoin(tools, eq(tools.id, evaluationSuites.toolId))
+      .where(eq(tools.organizationId, admin.organizationId))
+  ).map((row) => row.suite);
   const suitesWithTool = suites.map((suite) => ({ ...suite, toolSlug: toolRows.find((t) => t.id === suite.toolId)?.slug ?? suite.toolId }));
 
   return (

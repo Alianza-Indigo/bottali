@@ -2,16 +2,18 @@ import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { FlaskConical } from "lucide-react";
 import { db } from "@/lib/db/client";
-import { evaluationCases, evaluationRuns, evaluationSuites, tools } from "@/db/schema";
+import { evaluationCases, evaluationRuns, tools } from "@/db/schema";
 import { Badge } from "@/components/ui/Badge";
 import { AddCaseForm } from "@/components/admin/evaluations/AddCaseForm";
 import { RunSuiteButton } from "@/components/admin/evaluations/RunSuiteButton";
 import { AdminPageHeader, AdminPanel } from "@/components/admin/AdminPage";
+import { requireCurrentUser } from "@/lib/auth/current-user";
+import { getEvaluationSuiteForOrganization } from "@/lib/evaluations/service";
 
 export default async function EvaluationSuiteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const rows = await db.select().from(evaluationSuites).where(eq(evaluationSuites.id, id)).limit(1);
-  const suite = rows[0];
+  const admin = await requireCurrentUser();
+  const suite = await getEvaluationSuiteForOrganization(id, admin.organizationId).catch(() => null);
   if (!suite) notFound();
 
   const cases = await db.select().from(evaluationCases).where(eq(evaluationCases.suiteId, id));

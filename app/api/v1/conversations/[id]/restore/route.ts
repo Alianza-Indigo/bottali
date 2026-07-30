@@ -7,7 +7,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   try {
     const user = await requireCurrentUser();
     const { id } = await params;
-    await restoreConversation(id, user.id);
+    await restoreConversation(id, user.id, user.organizationId);
     return NextResponse.json({ message: "Conversación restaurada." });
   } catch (error) {
     return handleApiError(error);

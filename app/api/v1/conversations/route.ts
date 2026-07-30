@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     if (!parsed.success) {
       throw new ValidationError("Parámetros de paginación inválidos.", parsed.error.flatten());
     }
-    const conversations = await listConversations(user.id, parsed.data);
+    const conversations = await listConversations(user.id, parsed.data, user.organizationId);
     return NextResponse.json({ conversations });
   } catch (error) {
     return handleApiError(error);
@@ -36,14 +36,17 @@ export async function POST(request: Request) {
     const { toolId } = await parseJsonBody(request, createSchema);
 
     const tool = await getToolById(toolId);
+    if (tool.organizationId !== user.organizationId) {
+      throw new ForbiddenError("Esta herramienta no está disponible.");
+    }
     if (tool.status !== "PUBLISHED" || !tool.publishedVersionId) {
       throw new ForbiddenError("Esta herramienta no está disponible.");
     }
-    if (!(await canUserAccessTool(toolId, user.id))) {
+    if (!(await canUserAccessTool(toolId, user.id, user.organizationId))) {
       throw new ForbiddenError("No tienes acceso a esta herramienta.");
     }
 
-    const conversation = await createConversation(user.id, toolId, tool.publishedVersionId);
+    const conversation = await createConversation(user.id, toolId, tool.publishedVersionId, user.organizationId);
     return NextResponse.json({ conversation }, { status: 201 });
   } catch (error) {
     return handleApiError(error);

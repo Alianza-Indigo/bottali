@@ -19,6 +19,7 @@ import { assertValidToolTransition, assertValidVersionTransition, isValidToolTra
 import { copyVersionConfig, getLatestVersionNumber, getToolById, getVersionById, loadVersionConfig } from "./repository";
 import { assertSlugAvailable, validateVersionForPublish } from "./validation-publish";
 import { assertToolExternalCredentialReferences } from "./external-credentials";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 async function insertDefaultVersionScaffold(tx: DbOrTx, toolVersionId: string, input: Pick<CreateToolInput, "name" | "shortName" | "description">) {
   await tx.insert(toolBranding).values({
@@ -46,13 +47,17 @@ async function insertDefaultVersionScaffold(tx: DbOrTx, toolVersionId: string, i
   // validateVersionForPublish uses to detect an incomplete configuration (§7).
 }
 
-export async function createTool(input: CreateToolInput, actorId: string): Promise<{ toolId: string; versionId: string }> {
-  await assertSlugAvailable(input.slug);
+export async function createTool(
+  input: CreateToolInput,
+  actorId: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): Promise<{ toolId: string; versionId: string }> {
+  await assertSlugAvailable(input.slug, organizationId);
 
   const result = await db.transaction(async (tx) => {
     const [tool] = await tx
       .insert(tools)
-      .values({ slug: input.slug, category: input.category, team: input.team, createdBy: actorId, responsibleUserId: actorId })
+      .values({ organizationId, slug: input.slug, category: input.category, team: input.team, createdBy: actorId, responsibleUserId: actorId })
       .returning({ id: tools.id });
     if (!tool) throw new Error("No fue posible crear la herramienta.");
 
@@ -322,9 +327,15 @@ export async function rollbackToVersion(toolId: string, targetVersionId: string,
   return { newVersionId };
 }
 
-export async function duplicateTool(toolId: string, newSlug: string, actorId: string): Promise<{ toolId: string; versionId: string }> {
-  await assertSlugAvailable(newSlug);
+export async function duplicateTool(
+  toolId: string,
+  newSlug: string,
+  actorId: string,
+  organizationId: string,
+): Promise<{ toolId: string; versionId: string }> {
+  await assertSlugAvailable(newSlug, organizationId);
   const sourceTool = await getToolById(toolId);
+  if (sourceTool.organizationId !== organizationId) throw new ConflictError("La herramienta no pertenece a esta organización.");
   const sourceVersionId = sourceTool.draftVersionId ?? sourceTool.publishedVersionId;
   if (!sourceVersionId) throw new ConflictError("La herramienta de origen no tiene una versión para duplicar.");
 
@@ -332,6 +343,7 @@ export async function duplicateTool(toolId: string, newSlug: string, actorId: st
     const [tool] = await tx
       .insert(tools)
       .values({
+        organizationId,
         slug: newSlug,
         category: sourceTool.category,
         team: sourceTool.team,

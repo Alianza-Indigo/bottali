@@ -22,7 +22,7 @@ export default async function ConversationsPage() {
     })
     .from(conversations)
     .innerJoin(tools, eq(tools.id, conversations.toolId))
-    .where(and(eq(conversations.userId, user.id)))
+    .where(and(eq(conversations.organizationId, user.organizationId), eq(conversations.userId, user.id)))
     .orderBy(desc(conversations.updatedAt))
     .limit(100);
 

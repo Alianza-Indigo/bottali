@@ -13,7 +13,12 @@ import { ChatPageClient } from "@/components/chat/ChatPageClient";
 // the platform-wide one, so "Add to Home Screen" installs the tool as its own standalone app.
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  const toolRows = await db.select().from(tools).where(eq(tools.slug, slug)).limit(1);
+  const user = await requireCurrentUser();
+  const toolRows = await db
+    .select()
+    .from(tools)
+    .where(and(eq(tools.organizationId, user.organizationId), eq(tools.slug, slug)))
+    .limit(1);
   const tool = toolRows[0];
   if (!tool || tool.status !== "PUBLISHED" || !tool.publishedVersionId) return {};
 
@@ -32,11 +37,15 @@ export default async function ToolChatPage({ params }: { params: Promise<{ slug:
   const { slug } = await params;
   const user = await requireCurrentUser();
 
-  const toolRows = await db.select().from(tools).where(eq(tools.slug, slug)).limit(1);
+  const toolRows = await db
+    .select()
+    .from(tools)
+    .where(and(eq(tools.organizationId, user.organizationId), eq(tools.slug, slug)))
+    .limit(1);
   const tool = toolRows[0];
   if (!tool || tool.status !== "PUBLISHED" || !tool.publishedVersionId) notFound();
 
-  const hasAccess = await canUserAccessTool(tool.id, user.id);
+  const hasAccess = await canUserAccessTool(tool.id, user.id, user.organizationId);
   if (!hasAccess) redirect(`/tools/${slug}`);
 
   const [branding, behavior, capabilities] = await Promise.all([
@@ -48,7 +57,14 @@ export default async function ToolChatPage({ params }: { params: Promise<{ slug:
   const existingConversations = await db
     .select({ id: conversations.id, title: conversations.title, lastMessageAt: conversations.lastMessageAt })
     .from(conversations)
-    .where(and(eq(conversations.userId, user.id), eq(conversations.toolId, tool.id), eq(conversations.status, "ACTIVE")))
+    .where(
+      and(
+        eq(conversations.organizationId, user.organizationId),
+        eq(conversations.userId, user.id),
+        eq(conversations.toolId, tool.id),
+        eq(conversations.status, "ACTIVE"),
+      ),
+    )
     .orderBy(desc(conversations.lastMessageAt))
     .limit(50);
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUserWithPermission } from "@/lib/permissions/require";
+import { getToolForOrganization } from "@/lib/tools/repository";
 import { getVersionForTool, loadVersionConfig } from "@/lib/tools/repository";
 import {
   updateAccessRules,
@@ -34,8 +35,9 @@ const patchSchema = z.object({
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string; versionId: string }> }) {
   try {
-    await requireUserWithPermission("tools.read");
+    const user = await requireUserWithPermission("tools.read");
     const { id, versionId } = await params;
+    await getToolForOrganization(id, user.organizationId);
     const version = await getVersionForTool(id, versionId);
     const config = await loadVersionConfig(versionId);
     return NextResponse.json({ version, config });
@@ -50,6 +52,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     const user = await requireUserWithPermission("tools.update");
     const { id, versionId } = await params;
+    await getToolForOrganization(id, user.organizationId);
     await getVersionForTool(id, versionId);
     const body = await parseJsonBody(request, patchSchema);
 

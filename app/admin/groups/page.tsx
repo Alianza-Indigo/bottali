@@ -1,15 +1,20 @@
-import { isNull } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { groups } from "@/db/schema";
 import { UsersRound } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CreateGroupForm } from "@/components/admin/groups/CreateGroupForm";
 import { AdminPageHeader, AdminPanel } from "@/components/admin/AdminPage";
+import { requireCurrentUser } from "@/lib/auth/current-user";
 
 export const metadata = { title: "Grupos — Admin" };
 
 export default async function AdminGroupsPage() {
-  const rows = await db.select().from(groups).where(isNull(groups.deletedAt));
+  const admin = await requireCurrentUser();
+  const rows = await db
+    .select()
+    .from(groups)
+    .where(and(eq(groups.organizationId, admin.organizationId), isNull(groups.deletedAt)));
 
   return (
     <div className="flex flex-col gap-6">

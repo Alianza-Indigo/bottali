@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { sessionStatusEnum, userStatusEnum } from "./enums";
+import { organizations } from "./tenants";
 
 export const users = pgTable(
   "users",
@@ -88,6 +89,9 @@ export const sessions = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
     tokenHash: text("token_hash").notNull(),
     status: sessionStatusEnum("status").notNull().default("ACTIVE"),
     userAgent: text("user_agent"),
@@ -104,6 +108,7 @@ export const sessions = pgTable(
   },
   (table) => [
     index("sessions_user_id_idx").on(table.userId),
+    index("sessions_organization_idx").on(table.organizationId),
     index("sessions_token_hash_idx").on(table.tokenHash),
   ],
 );

@@ -1,5 +1,5 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { toolCapabilities, tools } from "@/db/schema";
 import { canUserAccessTool } from "@/lib/tools/access";
@@ -10,6 +10,7 @@ export type RuntimeCapability = "voiceInput" | "voiceOutput";
 export async function requireToolRuntimeCapability(
   toolId: string,
   userId: string,
+  organizationId: string,
   capability: RuntimeCapability,
 ): Promise<void> {
   const rows = await db
@@ -18,14 +19,14 @@ export async function requireToolRuntimeCapability(
       publishedVersionId: tools.publishedVersionId,
     })
     .from(tools)
-    .where(eq(tools.id, toolId))
+    .where(and(eq(tools.id, toolId), eq(tools.organizationId, organizationId)))
     .limit(1);
   const tool = rows[0];
   if (!tool) throw new NotFoundError("Herramienta no encontrada.");
   if (tool.status !== "PUBLISHED" || !tool.publishedVersionId) {
     throw new ForbiddenError("La herramienta no está publicada.");
   }
-  if (!(await canUserAccessTool(toolId, userId))) {
+  if (!(await canUserAccessTool(toolId, userId, organizationId))) {
     throw new ForbiddenError("No tienes acceso a esta herramienta.");
   }
 

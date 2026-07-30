@@ -4,6 +4,7 @@ import { groupMembers, groups, mfaCredentials, roles, userProfiles, userRoles, u
 import { hashPassword } from "@/lib/auth/password";
 import { encryptSecret } from "@/lib/security/crypto";
 import type { RoleKey } from "@/lib/permissions/definitions";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 // Fixed (not random) so tests/tooling can compute a matching code with generateTotpCode() —
 // admin roles now require MFA (§28) to reach /admin at all, so the demo admin accounts need
@@ -94,7 +95,12 @@ export async function seedDemoData(db: Database): Promise<void> {
     existingGroup[0]?.id ??
     (await db
       .insert(groups)
-      .values({ name: "Equipo de demostración", description: "Grupo creado por el seed de desarrollo.", createdBy: superAdminId })
+      .values({
+        organizationId: DEFAULT_ORGANIZATION_ID,
+        name: "Equipo de demostración",
+        description: "Grupo creado por el seed de desarrollo.",
+        createdBy: superAdminId,
+      })
       .returning({ id: groups.id }))[0]?.id;
 
   if (groupId) {

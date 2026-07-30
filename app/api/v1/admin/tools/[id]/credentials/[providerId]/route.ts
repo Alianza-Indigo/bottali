@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUserWithPermission } from "@/lib/permissions/require";
+import { getToolForOrganization } from "@/lib/tools/repository";
 import {
   deleteToolProviderCredential,
   saveToolProviderCredential,
@@ -32,6 +33,7 @@ export async function PUT(
   try {
     const user = await requireUserWithPermission("tools.credentials.manage");
     const { id, providerId } = await params;
+    await getToolForOrganization(id, user.organizationId);
     const body = await parseJsonBody(request, credentialSchema);
     await saveToolProviderCredential({
       toolId: id,
@@ -53,6 +55,7 @@ export async function DELETE(
   try {
     const user = await requireUserWithPermission("tools.credentials.manage");
     const { id, providerId } = await params;
+    await getToolForOrganization(id, user.organizationId);
     await deleteToolProviderCredential({ toolId: id, providerId, actorId: user.id });
     return NextResponse.json({ message: "Credencial eliminada." });
   } catch (error) {

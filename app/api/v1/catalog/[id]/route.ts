@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { tools } from "@/db/schema";
 import { requireCurrentUser } from "@/lib/auth/current-user";
@@ -22,7 +22,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const rows = await db
       .select()
       .from(tools)
-      .where(UUID_RE.test(id) ? eq(tools.id, id) : eq(tools.slug, id))
+      .where(
+        and(
+          eq(tools.organizationId, user.organizationId),
+          UUID_RE.test(id) ? eq(tools.id, id) : eq(tools.slug, id),
+        ),
+      )
       .limit(1);
     const tool = rows[0];
     if (!tool || tool.status !== "PUBLISHED" || !tool.publishedVersionId) {
@@ -31,7 +36,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
     const [config, state] = await Promise.all([
       loadVersionConfig(tool.publishedVersionId),
-      resolveCatalogState({ toolId: tool.id, userId: user.id }),
+      resolveCatalogState({ toolId: tool.id, userId: user.id, organizationId: user.organizationId }),
     ]);
 
     return NextResponse.json({

@@ -2,10 +2,11 @@ import "server-only";
 import { cookies, headers } from "next/headers";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { sessions, users, userProfiles, mfaCredentials } from "@/db/schema";
+import { sessions, users, userProfiles, mfaCredentials, organizations } from "@/db/schema";
 import { getEnv } from "@/lib/env";
 import { generateOpaqueToken, hashToken } from "./tokens";
 import { CSRF_COOKIE_NAME } from "@/lib/security/csrf";
+import { resolveUserOrganization } from "@/lib/organizations/service";
 
 export interface SessionUser {
   id: string;
@@ -13,6 +14,17 @@ export interface SessionUser {
   status: string;
   displayName: string | null;
   sessionId: string;
+  organizationId: string;
+  organization: {
+    id: string;
+    slug: string;
+    name: string;
+    logoUrl: string | null;
+    iconUrl: string | null;
+    primaryColor: string;
+    secondaryColor: string;
+    customDomain: string | null;
+  };
 }
 
 function truncateIp(ip: string | null): string | null {
@@ -52,14 +64,19 @@ export async function isMfaEnabled(userId: string): Promise<boolean> {
  * by the mfa/login-verify endpoint, but nothing else in the app can use it until that
  * endpoint calls markSessionMfaVerified().
  */
-export async function createSession(userId: string, options?: { requireMfaVerification?: boolean }): Promise<string> {
+export async function createSession(
+  userId: string,
+  options?: { requireMfaVerification?: boolean; organizationId?: string },
+): Promise<string> {
   const env = getEnv();
   const token = generateOpaqueToken();
   const { ipTruncated, userAgent } = await getRequestMetadata();
   const expiresAt = new Date(Date.now() + env.SESSION_TTL_SECONDS * 1000);
+  const organization = await resolveUserOrganization(userId, options?.organizationId);
 
   await db.insert(sessions).values({
     userId,
+    organizationId: organization.id,
     tokenHash: hashToken(token),
     ipTruncated,
     userAgent,
@@ -100,9 +117,19 @@ async function loadSessionRowByToken(token: string) {
       email: users.email,
       userStatus: users.status,
       displayName: userProfiles.displayName,
+      organizationId: organizations.id,
+      organizationSlug: organizations.slug,
+      organizationName: organizations.name,
+      organizationStatus: organizations.status,
+      organizationLogoUrl: organizations.logoUrl,
+      organizationIconUrl: organizations.iconUrl,
+      organizationPrimaryColor: organizations.primaryColor,
+      organizationSecondaryColor: organizations.secondaryColor,
+      organizationCustomDomain: organizations.customDomain,
     })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
+    .innerJoin(organizations, eq(organizations.id, sessions.organizationId))
     .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
     .where(and(eq(sessions.tokenHash, tokenHash)))
     .limit(1);
@@ -114,6 +141,7 @@ async function loadSessionRowByToken(token: string) {
   if (row.userStatus === "SUSPENDED" || row.userStatus === "BLOCKED" || row.userStatus === "DELETED") {
     return null;
   }
+  if (row.organizationStatus !== "ACTIVE") return null;
   return row;
 }
 
@@ -142,6 +170,17 @@ export async function getCurrentSession(): Promise<SessionUser | null> {
     status: row.userStatus,
     displayName: row.displayName,
     sessionId: row.sessionId,
+    organizationId: row.organizationId,
+    organization: {
+      id: row.organizationId,
+      slug: row.organizationSlug,
+      name: row.organizationName,
+      logoUrl: row.organizationLogoUrl,
+      iconUrl: row.organizationIconUrl,
+      primaryColor: row.organizationPrimaryColor,
+      secondaryColor: row.organizationSecondaryColor,
+      customDomain: row.organizationCustomDomain,
+    },
   };
 }
 
