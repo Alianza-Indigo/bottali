@@ -27,7 +27,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     let syncedModels = 0;
     if (provider.kind === "llm") {
-      const models = await getLLMProvider().listModels();
+      const models = (await getLLMProvider(provider.key).listModels()).filter(
+        (model) => provider.key !== "llm:gemini" || model.key === "gemini-3.1-flash-lite",
+      );
       for (const model of models) {
         await db
           .insert(providerModels)

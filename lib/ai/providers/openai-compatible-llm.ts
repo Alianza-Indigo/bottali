@@ -1,5 +1,6 @@
 import type {
   GenerationChunk,
+  GenerationMessage,
   GenerationRequest,
   GenerationResult,
   LLMModel,
@@ -8,6 +9,30 @@ import type {
   ToolCall,
   ToolSpec,
 } from "../types";
+
+function toOpenAIMessages(messages: GenerationMessage[]) {
+  return messages.map((message) => {
+    if (message.role === "assistant" && message.toolCalls?.length) {
+      return {
+        role: "assistant" as const,
+        content: message.content || null,
+        tool_calls: message.toolCalls.map((call) => ({
+          id: call.id,
+          type: "function" as const,
+          function: { name: call.name, arguments: call.arguments },
+        })),
+      };
+    }
+    if (message.role === "tool") {
+      return {
+        role: "tool" as const,
+        content: message.content,
+        tool_call_id: message.toolCallId,
+      };
+    }
+    return { role: message.role, content: message.content };
+  });
+}
 
 function toOpenAITools(tools: ToolSpec[] | undefined) {
   if (!tools?.length) return undefined;
@@ -32,6 +57,7 @@ export interface OpenAICompatibleConfig {
   baseUrl: string;
   timeoutMs: number;
   maxRetries: number;
+  providerKey?: string;
 }
 
 function combineSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefined {
@@ -51,9 +77,11 @@ async function sleep(ms: number): Promise<void> {
 
 /** Talks to any Chat Completions-compatible HTTP API (OpenAI and drop-in compatible services). */
 export class OpenAICompatibleLLMProvider implements LLMProvider {
-  readonly key = "openai-compatible";
+  readonly key: string;
 
-  constructor(private readonly config: OpenAICompatibleConfig) {}
+  constructor(private readonly config: OpenAICompatibleConfig) {
+    this.key = config.providerKey ?? "openai-compatible";
+  }
 
   private authHeaders() {
     return {
@@ -98,7 +126,7 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
           signal: combineSignals(request.signal, controller.signal),
           body: JSON.stringify({
             model: request.model,
-            messages: request.messages,
+            messages: toOpenAIMessages(request.messages),
             temperature: request.temperature,
             top_p: request.topP,
             max_tokens: request.maxOutputTokens,
@@ -163,7 +191,7 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
         signal: combineSignals(request.signal, controller.signal),
         body: JSON.stringify({
           model: request.model,
-          messages: request.messages,
+          messages: toOpenAIMessages(request.messages),
           temperature: request.temperature,
           top_p: request.topP,
           max_tokens: request.maxOutputTokens,

@@ -43,8 +43,10 @@ function main() {
       "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET no configurados: el acceso con Google no funcionará.",
     );
   }
-  if (env.LLM_PROVIDER === "fake") {
-    problems.push('LLM_PROVIDER=fake: el proveedor determinista de pruebas está activo; configura "openai-compatible" con LLM_API_KEY para producción real.');
+  if (env.LLM_PROVIDER === "fake" && !env.GEMINI_API_KEY) {
+    problems.push(
+      'No hay un LLM real configurado: define GEMINI_API_KEY o usa LLM_PROVIDER="openai-compatible" con LLM_API_KEY.',
+    );
   }
   if (env.EMBEDDING_PROVIDER === "fake") {
     problems.push('EMBEDDING_PROVIDER=fake: configura "openai-compatible" con EMBEDDING_API_KEY para producción real.');

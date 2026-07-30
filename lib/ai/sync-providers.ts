@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Database } from "@/lib/db/client";
 import { providerModels, providers } from "@/db/schema";
 import { getEnv } from "@/lib/env";
@@ -8,7 +8,13 @@ interface ProviderSpec {
   key: string;
   name: string;
   enabled: boolean;
-  models: Array<{ modelKey: string; displayName: string; contextWindow: number }>;
+  models: Array<{
+    modelKey: string;
+    displayName: string;
+    contextWindow: number;
+    inputCostPerMilleCents?: string;
+    outputCostPerMilleCents?: string;
+  }>;
 }
 
 /**
@@ -34,6 +40,21 @@ export async function syncProvidersFromEnv(db: Database): Promise<void> {
                 ? [{ modelKey: env.LLM_FALLBACK_MODEL, displayName: env.LLM_FALLBACK_MODEL, contextWindow: 128000 }]
                 : [],
             ),
+    },
+    {
+      kind: "llm",
+      key: "gemini",
+      name: "Google Gemini",
+      enabled: Boolean(env.GEMINI_API_KEY),
+      models: [
+        {
+          modelKey: "gemini-3.1-flash-lite",
+          displayName: "Gemini 3.1 Flash-Lite",
+          contextWindow: 1_048_576,
+          inputCostPerMilleCents: "0.0250",
+          outputCostPerMilleCents: "0.1500",
+        },
+      ],
     },
     {
       kind: "embedding",
@@ -86,20 +107,26 @@ export async function syncProvidersFromEnv(db: Database): Promise<void> {
     await db.update(providers).set({ enabled: spec.enabled, name: spec.name, updatedAt: new Date() }).where(eq(providers.id, providerId));
 
     for (const model of spec.models) {
-      const existingModel = await db
-        .select({ id: providerModels.id })
-        .from(providerModels)
-        .where(and(eq(providerModels.providerId, providerId), eq(providerModels.modelKey, model.modelKey)))
-        .limit(1);
-      const alreadyPresent = existingModel.length > 0;
-      if (!alreadyPresent) {
-        await db.insert(providerModels).values({
+      await db
+        .insert(providerModels)
+        .values({
           providerId,
           modelKey: model.modelKey,
           displayName: model.displayName,
           contextWindow: model.contextWindow,
+          inputCostPerMilleCents: model.inputCostPerMilleCents ?? "0",
+          outputCostPerMilleCents: model.outputCostPerMilleCents ?? "0",
+        })
+        .onConflictDoUpdate({
+          target: [providerModels.providerId, providerModels.modelKey],
+          set: {
+            displayName: model.displayName,
+            contextWindow: model.contextWindow,
+            inputCostPerMilleCents: model.inputCostPerMilleCents ?? "0",
+            outputCostPerMilleCents: model.outputCostPerMilleCents ?? "0",
+            available: true,
+          },
         });
-      }
     }
   }
 }

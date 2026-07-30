@@ -11,28 +11,47 @@ import { DisabledSpeechToTextProvider, DisabledTextToSpeechProvider } from "./pr
 import { OpenAICompatibleSpeechToTextProvider, OpenAICompatibleTextToSpeechProvider } from "./providers/openai-compatible-voice";
 import { FakeSpeechToTextProvider, FakeTextToSpeechProvider } from "./providers/fake-voice";
 
-let llmProvider: LLMProvider | undefined;
+const llmProviders = new Map<string, LLMProvider>();
 let llmFallbackProvider: LLMProvider | undefined;
 let embeddingProvider: EmbeddingProvider | undefined;
 let moderationProvider: ModerationProvider | undefined;
 let sttProvider: SpeechToTextProvider | undefined;
 let ttsProvider: TextToSpeechProvider | undefined;
 
-export function getLLMProvider(): LLMProvider {
-  if (llmProvider) return llmProvider;
+export function getLLMProvider(providerKey?: string): LLMProvider {
   const env = getEnv();
-  if (env.LLM_PROVIDER === "openai-compatible") {
+  const defaultProviderKey = `llm:${env.LLM_PROVIDER}`;
+  const resolvedKey = providerKey ?? defaultProviderKey;
+  const cached = llmProviders.get(resolvedKey);
+  if (cached) return cached;
+
+  let provider: LLMProvider;
+  if (resolvedKey === "llm:gemini") {
+    if (!env.GEMINI_API_KEY) throw new Error("Gemini requiere GEMINI_API_KEY.");
+    provider = new OpenAICompatibleLLMProvider({
+      apiKey: env.GEMINI_API_KEY,
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      timeoutMs: 30000,
+      maxRetries: 2,
+      providerKey: "gemini",
+    });
+  } else if (resolvedKey === defaultProviderKey && env.LLM_PROVIDER === "openai-compatible") {
     if (!env.LLM_API_KEY) throw new Error("LLM_PROVIDER=openai-compatible requiere LLM_API_KEY.");
-    llmProvider = new OpenAICompatibleLLMProvider({
+    provider = new OpenAICompatibleLLMProvider({
       apiKey: env.LLM_API_KEY,
       baseUrl: env.LLM_API_BASE_URL,
       timeoutMs: 30000,
       maxRetries: 2,
+      providerKey: env.LLM_PROVIDER,
     });
+  } else if (resolvedKey === defaultProviderKey && env.LLM_PROVIDER === "fake") {
+    provider = new FakeLLMProvider();
   } else {
-    llmProvider = new FakeLLMProvider();
+    throw new Error(`Proveedor LLM no configurado: ${resolvedKey}.`);
   }
-  return llmProvider;
+
+  llmProviders.set(resolvedKey, provider);
+  return provider;
 }
 
 /** Returns a fallback LLM provider only when explicitly configured — never silently substitutes one. */

@@ -46,6 +46,7 @@ const envSchema = z.object({
   LLM_API_BASE_URL: z.string().default("https://api.openai.com/v1"),
   LLM_DEFAULT_MODEL: z.string().default("gpt-4o-mini"),
   LLM_FALLBACK_MODEL: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
 
   EMBEDDING_PROVIDER: z.enum(["fake", "openai-compatible"]).default("fake"),
   EMBEDDING_API_KEY: z.string().optional(),

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { providerModels } from "@/db/schema";
+import { providerModels, providers } from "@/db/schema";
 import { getLLMProvider } from "@/lib/ai/registry";
 import { loadVersionConfig } from "./repository";
 import { NotFoundError, ValidationError } from "@/lib/utils/errors";
@@ -24,11 +24,18 @@ export async function runToolTest(toolVersionId: string, userMessage: string): P
     throw new ValidationError("La herramienta no tiene un modelo principal configurado.");
   }
 
-  const modelRows = await db.select().from(providerModels).where(eq(providerModels.id, config.models.primaryModelId)).limit(1);
-  const model = modelRows[0];
+  const modelRows = await db
+    .select({ model: providerModels, providerKey: providers.key, providerEnabled: providers.enabled })
+    .from(providerModels)
+    .innerJoin(providers, eq(providers.id, providerModels.providerId))
+    .where(eq(providerModels.id, config.models.primaryModelId))
+    .limit(1);
+  const selected = modelRows[0];
+  const model = selected?.model;
   if (!model) throw new NotFoundError("El modelo configurado ya no existe.");
+  if (!selected.providerEnabled) throw new ValidationError("El proveedor configurado no está disponible.");
 
-  const provider = getLLMProvider();
+  const provider = getLLMProvider(selected.providerKey);
   const result = await provider.generate({
     model: model.modelKey,
     messages: [

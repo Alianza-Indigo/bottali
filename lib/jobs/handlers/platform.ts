@@ -20,26 +20,31 @@ registerJobHandler("revoke_expired_sessions", async () => {
 });
 
 registerJobHandler("provider_health_check", async () => {
-  const checks = await Promise.allSettled([
-    getLLMProvider().healthcheck(),
-    getEmbeddingProvider().healthcheck(),
-    getModerationProvider().healthcheck(),
-  ]);
+  const rows = await db
+    .select({ id: providers.id, key: providers.key, kind: providers.kind, enabled: providers.enabled })
+    .from(providers);
+  const checkedProviders = rows.filter(
+    (provider) => provider.enabled && ["llm", "embedding", "moderation"].includes(provider.kind),
+  );
+  const checks = await Promise.allSettled(
+    checkedProviders.map((provider) => {
+      if (provider.kind === "llm") return getLLMProvider(provider.key).healthcheck();
+      if (provider.kind === "embedding") return getEmbeddingProvider().healthcheck();
+      return getModerationProvider().healthcheck();
+    }),
+  );
 
-  const kinds = ["llm", "embedding", "moderation"] as const;
   let updated = 0;
-  for (let i = 0; i < kinds.length; i++) {
+  for (let i = 0; i < checkedProviders.length; i++) {
     const check = checks[i];
     if (check?.status !== "fulfilled") continue;
     const health = check.value;
-    const rows = await db.select({ id: providers.id, key: providers.key }).from(providers).where(eq(providers.kind, kinds[i]!));
-    for (const row of rows) {
-      await db
-        .update(providers)
-        .set({ lastHealthcheckAt: new Date(), lastHealthcheckStatus: health.healthy ? "healthy" : "unhealthy", updatedAt: new Date() })
-        .where(eq(providers.id, row.id));
-      updated += 1;
-    }
+    const provider = checkedProviders[i]!;
+    await db
+      .update(providers)
+      .set({ lastHealthcheckAt: new Date(), lastHealthcheckStatus: health.healthy ? "healthy" : "unhealthy", updatedAt: new Date() })
+      .where(eq(providers.id, provider.id));
+    updated += 1;
   }
   return { updated };
 });

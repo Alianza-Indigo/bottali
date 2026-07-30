@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { conversations, knowledgeBases, messages, notifications, providerModels, toolCallConfirmations, tools } from "@/db/schema";
+import { conversations, knowledgeBases, messages, notifications, providerModels, providers, toolCallConfirmations, tools } from "@/db/schema";
 import type { FullVersionConfig } from "@/lib/tools/repository";
 import { canUserAccessTool } from "@/lib/tools/access";
 import { loadVersionConfig } from "@/lib/tools/repository";
@@ -67,6 +67,7 @@ interface ResolvedContext {
   tool: typeof tools.$inferSelect;
   config: FullVersionConfig & { behavior: NonNullable<FullVersionConfig["behavior"]> };
   model: typeof providerModels.$inferSelect;
+  providerKey: string;
 }
 
 async function resolveGenerationContext(conversationId: string, userId: string): Promise<ResolvedContext> {
@@ -93,8 +94,17 @@ async function resolveGenerationContext(conversationId: string, userId: string):
   const modelRows = await db.select().from(providerModels).where(eq(providerModels.id, config.models.primaryModelId)).limit(1);
   const model = modelRows[0];
   if (!model) throw new AppError("El modelo configurado ya no existe.", "MODEL_NOT_FOUND", 500);
+  const providerRows = await db
+    .select({ key: providers.key, enabled: providers.enabled })
+    .from(providers)
+    .where(eq(providers.id, model.providerId))
+    .limit(1);
+  const provider = providerRows[0];
+  if (!provider?.enabled) {
+    throw new AppError("El proveedor configurado no está disponible.", "PROVIDER_UNAVAILABLE", 503);
+  }
 
-  return { conversation, tool, config: config as ResolvedContext["config"], model };
+  return { conversation, tool, config: config as ResolvedContext["config"], model, providerKey: provider.key };
 }
 
 function resolveAllowedToolNames(config: ResolvedContext["config"]): string[] {
@@ -568,7 +578,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
   const toolSpecs = combinedToolSpecs.length > 0 ? combinedToolSpecs : undefined;
   const confirmationsRequired = config.safetyPolicies?.confirmationsRequired ?? [];
 
-  const provider = getLLMProvider();
+  const provider = getLLMProvider(ctx.providerKey);
   const startedAt = Date.now();
 
   let fullText = "";
@@ -879,7 +889,7 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
 
   const ctx = await resolveGenerationContext(confirmation.conversationId, params.userId);
   const { conversation, tool, config, model } = ctx;
-  const provider = getLLMProvider();
+  const provider = getLLMProvider(ctx.providerKey);
   const context = { userId: params.userId, conversationId: conversation.id, toolId: tool.id };
   const call: ToolCall = { id: confirmation.toolCallId, name: confirmation.toolName, arguments: confirmation.argumentsJson };
 

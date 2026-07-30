@@ -17,7 +17,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 
     const healthcheck =
       provider.kind === "llm"
-        ? await getLLMProvider().healthcheck()
+        ? await getLLMProvider(provider.key).healthcheck()
         : provider.kind === "embedding"
           ? await getEmbeddingProvider().healthcheck()
           : provider.kind === "moderation"
