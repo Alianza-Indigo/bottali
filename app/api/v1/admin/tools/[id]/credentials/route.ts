@@ -5,7 +5,7 @@ import { handleApiError } from "@/lib/validation/http";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireUserWithPermission("tools.read");
+    await requireUserWithPermission("tools.credentials.manage");
     const { id } = await params;
     const credentials = await listToolProviderCredentials(id);
     return NextResponse.json({

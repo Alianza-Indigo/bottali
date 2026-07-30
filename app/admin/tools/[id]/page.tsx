@@ -7,26 +7,35 @@ import { ToolBuilder } from "@/components/admin/tools/ToolBuilder";
 import { db } from "@/lib/db/client";
 import { knowledgeBases, knowledgeDocuments } from "@/db/schema";
 import { listToolProviderCredentials } from "@/lib/tools/provider-credentials";
+import { listToolExternalCredentialOptions } from "@/lib/tools/external-credentials";
+import { getUserPermissions } from "@/lib/permissions/rbac";
 
 export default async function AdminToolDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await requireCurrentUser();
 
+  const permissions = await getUserPermissions(user.id);
+  if (!permissions.has("tools.update")) notFound();
+  const draftVersionId = await ensureEditableDraftVersion(id, user.id).catch(() => null);
+  if (!draftVersionId) notFound();
+
   const builderData = await getAdminToolBuilderData(id).catch(() => null);
   if (!builderData) notFound();
   const { tool, versions, modelProviders } = builderData;
-  const providerCredentials = await listToolProviderCredentials(id);
-
-  const draftVersionId = await ensureEditableDraftVersion(id, user.id);
-  const config = await loadVersionConfig(draftVersionId);
+  const canManageCredentials = permissions.has("tools.credentials.manage");
+  const [providerCredentials, externalCredentials, config, knowledgeBaseRows] = await Promise.all([
+    canManageCredentials ? listToolProviderCredentials(id) : Promise.resolve([]),
+    listToolExternalCredentialOptions(id),
+    loadVersionConfig(draftVersionId),
+    db
+      .select()
+      .from(knowledgeBases)
+      .where(and(eq(knowledgeBases.toolId, id), isNull(knowledgeBases.deletedAt)))
+      .limit(1),
+  ]);
   const activeVersion = versions.find((version) => version.id === draftVersionId);
   if (!activeVersion) notFound();
 
-  const knowledgeBaseRows = await db
-    .select()
-    .from(knowledgeBases)
-    .where(and(eq(knowledgeBases.toolId, id), isNull(knowledgeBases.deletedAt)))
-    .limit(1);
   const knowledgeBase = knowledgeBaseRows[0] ?? null;
   const documents = knowledgeBase
     ? await db
@@ -61,6 +70,12 @@ export default async function AdminToolDetailPage({ params }: { params: Promise<
         lastTestedAt: credential.lastTestedAt?.toISOString() ?? null,
         lastTestStatus: credential.lastTestStatus,
       }))}
+      externalCredentials={externalCredentials.map((credential) => ({
+        id: credential.id,
+        name: credential.name,
+        authType: credential.authType,
+      }))}
+      canManageCredentials={canManageCredentials}
       knowledgeBase={
         knowledgeBase
           ? {

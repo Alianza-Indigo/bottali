@@ -292,6 +292,16 @@ versiones y las evaluaciones automatizadas que corren contra una versión.
 | POST | `/api/v1/admin/providers/{id}/sync-models` | `providers.manage` | Sincroniza el catálogo de modelos disponibles del proveedor. |
 | GET | `/api/v1/admin/models` | `providers.read` | Lista los modelos sincronizados, con su proveedor. |
 
+### Credenciales BYO por herramienta
+
+| Método | Ruta | Permiso | Descripción |
+|---|---|---|---|
+| GET | `/api/v1/admin/tools/{id}/credentials` | `tools.credentials.manage` | Lista proveedores configurados sin devolver claves. |
+| PUT / DELETE | `/api/v1/admin/tools/{id}/credentials/{providerId}` | `tools.credentials.manage` | Guarda cifrada o elimina una clave de IA auxiliar o LLM. |
+| POST | `/api/v1/admin/tools/{id}/credentials/{providerId}/test` | `tools.credentials.manage` | Prueba la credencial guardada. |
+| GET / POST | `/api/v1/admin/tools/{id}/external-credentials` | `tools.credentials.manage` | Lista o crea credenciales para endpoints externos. |
+| PUT / DELETE | `/api/v1/admin/tools/{id}/external-credentials/{credentialId}` | `tools.credentials.manage` | Actualiza o elimina una credencial externa no vinculada. |
+
 ---
 
 ## 13. Admin — Analítica (`admin/analytics/*`)
@@ -325,7 +335,7 @@ Todos los endpoints de esta sección requieren `analytics.read` (§27).
 
 | Método | Ruta | Permiso/guardia requerida | Descripción |
 |---|---|---|---|
-| GET | `/api/v1/health/dependencies` | `requireCurrentUser` + `security.read` | Único endpoint de salud que expone *cuáles* dependencias están configuradas (nunca sus secretos): base de datos, proveedor LLM, embeddings, moderación, rate limiter. Exclusivo para administradores (§35). |
+| GET | `/api/v1/health/dependencies` | `requireCurrentUser` + `security.read` | Expone salud de infraestructura y respaldos globales, más conteos de credenciales BYO por tipo; nunca devuelve secretos. Exclusivo para administradores (§35). |
 
 La revocación de sesiones de un usuario (`POST /api/v1/admin/users/{id}/sessions/revoke`,
 `users.suspend`) y la gestión de MFA propio (`auth/mfa/*`, sección 2) son

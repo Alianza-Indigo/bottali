@@ -4,6 +4,7 @@ import { evaluationRuns, evaluationSuites, legalDocuments, providers, tools } fr
 import { loadVersionConfig, getVersionById, getToolById } from "./repository";
 import { ConflictError } from "@/lib/utils/errors";
 import { toolHasProviderCredential } from "./provider-credentials";
+import { assertToolExternalCredentialReferences } from "./external-credentials";
 
 export interface PublishValidationResult {
   valid: boolean;
@@ -58,6 +59,19 @@ export async function validateVersionForPublish(toolVersionId: string): Promise<
 
   if (!config.accessRules) errors.push("Faltan las reglas de acceso.");
   if (!config.safetyPolicies) errors.push("Faltan las políticas de seguridad.");
+
+  const credentialIds = [
+    ...new Set(
+      (config.capabilities?.externalApiEndpoints ?? [])
+        .map((endpoint) => endpoint.credentialId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  try {
+    await assertToolExternalCredentialReferences(tool.id, credentialIds);
+  } catch {
+    errors.push("Un endpoint externo referencia una credencial inexistente o de otra herramienta.");
+  }
 
   if (config.capabilities?.pwa) {
     if (!config.pwaConfig) {

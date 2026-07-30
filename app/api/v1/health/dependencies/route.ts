@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
+import { providers, toolProviderCredentials } from "@/db/schema";
 import { requireCurrentUser } from "@/lib/auth/current-user";
 import { requirePermission } from "@/lib/permissions/rbac";
 import { getLLMProvider, getEmbeddingProvider, getModerationProvider } from "@/lib/ai/registry";
@@ -18,11 +19,19 @@ export async function GET() {
     const env = getEnv();
     const started = Date.now();
 
-    const [database, llm, embedding, moderation] = await Promise.allSettled([
+    const [database, llm, embedding, moderation, credentialCounts] = await Promise.allSettled([
       db.execute(sql`select 1`).then(() => ({ healthy: true })),
       getLLMProvider().healthcheck(),
       getEmbeddingProvider().healthcheck(),
       getModerationProvider().healthcheck(),
+      db
+        .select({
+          kind: providers.kind,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(toolProviderCredentials)
+        .innerJoin(providers, eq(providers.id, toolProviderCredentials.providerId))
+        .groupBy(providers.kind),
     ]);
 
     let redis: { healthy: boolean; message?: string } = { healthy: false, message: "No configurado (usando fallback en memoria)" };
@@ -41,9 +50,15 @@ export async function GET() {
       dependencies: {
         database: database.status === "fulfilled" ? database.value : { healthy: false },
         redis,
-        llm: llm.status === "fulfilled" ? llm.value : { healthy: false },
-        embedding: embedding.status === "fulfilled" ? embedding.value : { healthy: false },
-        moderation: moderation.status === "fulfilled" ? moderation.value : { healthy: false },
+        globalFallbacks: {
+          llm: llm.status === "fulfilled" ? llm.value : { healthy: false },
+          embedding: embedding.status === "fulfilled" ? embedding.value : { healthy: false },
+          moderation: moderation.status === "fulfilled" ? moderation.value : { healthy: false },
+        },
+        toolCredentials:
+          credentialCounts.status === "fulfilled"
+            ? Object.fromEntries(credentialCounts.value.map((row) => [row.kind, row.count]))
+            : {},
       },
     });
   } catch (error) {

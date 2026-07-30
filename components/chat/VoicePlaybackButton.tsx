@@ -13,7 +13,15 @@ const SPEEDS = [0.75, 1, 1.25, 1.5];
 
 /** §16: synthesizes and plays back an assistant reply. Playback rate, volume, and
  * cancellation are real controls over a real <audio> element — not decorative. */
-export function VoicePlaybackButton({ text, voices }: { text: string; voices: VoiceOption[] }) {
+export function VoicePlaybackButton({
+  toolId,
+  text,
+  voices,
+}: {
+  toolId: string;
+  text: string;
+  voices: VoiceOption[];
+}) {
   const [playing, setPlaying] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +56,7 @@ export function VoicePlaybackButton({ text, voices }: { text: string; voices: Vo
       const res = await fetch("/api/v1/speech/synthesize", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...csrfHeaders() },
-        body: JSON.stringify({ text, voiceId, speed }),
+        body: JSON.stringify({ toolId, text, voiceId, speed }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));

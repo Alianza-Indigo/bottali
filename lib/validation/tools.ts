@@ -16,6 +16,46 @@ export const createToolSchema = z.object({
 });
 export type CreateToolInput = z.infer<typeof createToolSchema>;
 
+const FORBIDDEN_CREDENTIAL_HEADERS = new Set([
+  "host",
+  "content-length",
+  "cookie",
+  "connection",
+  "transfer-encoding",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "upgrade",
+]);
+
+function isAllowedCredentialHeader(header: string): boolean {
+  const normalized = header.toLowerCase();
+  return (
+    !FORBIDDEN_CREDENTIAL_HEADERS.has(normalized) &&
+    !normalized.startsWith("proxy-") &&
+    !normalized.startsWith("sec-")
+  );
+}
+
+export const externalCredentialInputSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  authType: z.enum(["bearer", "api_key", "basic", "oauth2_client_credentials"]),
+  secret: z.string().trim().min(1).max(2000).optional(),
+  headerName: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9-]{1,80}$/)
+    .refine(
+      isAllowedCredentialHeader,
+      "Este encabezado HTTP está reservado.",
+    )
+    .optional(),
+  username: z.string().trim().max(200).optional(),
+  clientId: z.string().trim().max(500).optional(),
+  tokenUrl: z.string().trim().url().optional(),
+  scope: z.string().trim().max(500).optional(),
+});
+
 export const brandingSchema = z.object({
   name: z.string().min(1).max(120),
   shortName: z.string().min(1).max(40),
@@ -93,6 +133,12 @@ const externalApiEndpointSchema = z.object({
     }, "La URL no puede incluir credenciales ni puertos no estándar."),
   method: z.enum(["GET", "POST"]),
   description: z.string().max(200).optional(),
+  credentialId: z
+    .string()
+    .uuid()
+    .optional()
+    .or(z.literal(""))
+    .transform((value) => value || undefined),
 });
 
 export const capabilitiesSchema = z.object({

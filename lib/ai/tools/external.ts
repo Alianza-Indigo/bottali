@@ -4,12 +4,14 @@ import type { ToolExecutionResult } from "./types";
 import { assertSafeExternalUrl } from "@/lib/security/external-url";
 import { recordAuditEvent, recordSecurityEvent } from "@/lib/audit/log";
 import { getRateLimiter } from "@/lib/security/rate-limit";
+import { resolveExternalCredentialHeaders } from "@/lib/tools/external-credentials";
 
 export interface ExternalApiEndpoint {
   name: string;
   url: string;
   method: "GET" | "POST";
   description?: string;
+  credentialId?: string;
 }
 
 export interface ExternalApiExecutionContext {
@@ -128,9 +130,19 @@ export async function executeExternalApiCall(
       const rateLimit = await getRateLimiter().consume(`external-api:${context.userId}:${endpointName}`, 30, 60);
       if (!rateLimit.allowed) throw new Error("Límite de llamadas a esta API externa excedido.");
     }
+    if (endpoint.credentialId && !context) {
+      throw new Error("La llamada autenticada requiere contexto de herramienta.");
+    }
+    const credentialHeaders = context
+      ? await resolveExternalCredentialHeaders(context.toolId, endpoint.credentialId)
+      : {};
     const init: RequestInit = {
       method: endpoint.method,
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...credentialHeaders,
+      },
       signal: AbortSignal.timeout(EXTERNAL_API_TIMEOUT_MS),
       redirect: "manual",
     };

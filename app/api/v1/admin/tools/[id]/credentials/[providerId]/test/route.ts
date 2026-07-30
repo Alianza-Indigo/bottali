@@ -8,7 +8,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string; providerId: string }> },
 ) {
   try {
-    await requireUserWithPermission("tools.update");
+    await requireUserWithPermission("tools.credentials.manage");
     const { id, providerId } = await params;
     const health = await testToolProviderCredential(id, providerId);
     return NextResponse.json({ health });

@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { knowledgeChunks, knowledgeDocuments } from "@/db/schema";
-import { getEmbeddingProvider } from "@/lib/ai/registry";
+import { knowledgeBases, knowledgeChunks, knowledgeDocuments } from "@/db/schema";
+import { getToolEmbeddingProvider } from "@/lib/tools/provider-credentials";
 
 export interface RetrievedChunk {
   documentId: string;
@@ -33,7 +33,15 @@ function cosineSimilarity(a: number[], b: number[]): number {
  * not intended to scale to millions of chunks without swapping in a real vector index.
  */
 export async function retrieveRelevantChunks(knowledgeBaseId: string, query: string, topK = 5): Promise<RetrievedChunk[]> {
-  const [queryEmbedding] = await getEmbeddingProvider().embedTexts([query]);
+  const baseRows = await db
+    .select({ toolId: knowledgeBases.toolId })
+    .from(knowledgeBases)
+    .where(eq(knowledgeBases.id, knowledgeBaseId))
+    .limit(1);
+  const toolId = baseRows[0]?.toolId;
+  if (!toolId) return [];
+  const embeddingProvider = await getToolEmbeddingProvider(toolId);
+  const [queryEmbedding] = await embeddingProvider.embedTexts([query]);
   if (!queryEmbedding) return [];
 
   const rows = await db
@@ -42,6 +50,7 @@ export async function retrieveRelevantChunks(knowledgeBaseId: string, query: str
       documentId: knowledgeChunks.documentId,
       content: knowledgeChunks.content,
       embedding: knowledgeChunks.embedding,
+      metadata: knowledgeChunks.metadata,
       documentName: knowledgeDocuments.name,
       documentStatus: knowledgeDocuments.status,
     })
@@ -50,7 +59,14 @@ export async function retrieveRelevantChunks(knowledgeBaseId: string, query: str
     .where(eq(knowledgeChunks.knowledgeBaseId, knowledgeBaseId));
 
   const scored = rows
-    .filter((row) => row.documentStatus === "READY")
+    .filter((row) => {
+      if (row.documentStatus !== "READY") return false;
+      const indexedProvider = row.metadata.embeddingProvider;
+      const indexedDimensions = row.metadata.embeddingDimensions;
+      if (typeof indexedProvider === "string" && indexedProvider !== embeddingProvider.key) return false;
+      if (typeof indexedDimensions === "number" && indexedDimensions !== embeddingProvider.dimensions) return false;
+      return row.embedding.length === queryEmbedding.length;
+    })
     .map((row) => ({
       documentId: row.documentId,
       documentName: row.documentName,

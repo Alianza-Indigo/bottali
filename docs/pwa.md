@@ -209,16 +209,18 @@ capacidades (`files`, `images`, `forms`, `deepLinks`, etc.).
 ### Variable de entorno `ENABLE_PWA`
 
 `ENABLE_PWA` está declarada en el esquema de entorno (`lib/env.ts`, junto a
-`ENABLE_VOICE`, `ENABLE_FILES` y `ENABLE_ANALYTICS`) y se valida como booleano
+`ENABLE_FILES` y `ENABLE_ANALYTICS`) y se valida como booleano
 mediante `boolFromString`; `.env.example` la trae en `true` y
 `.github/workflows/ci.yml` la fija en `"true"` para la suite de CI. A
-diferencia de `ENABLE_VOICE` (consumida por `lib/ai/registry.ts`) y
 `ENABLE_FILES` (consumida por `lib/files/service.ts`), en el código actual
 ningún módulo lee `getEnv().ENABLE_PWA` para condicionar comportamiento: el
 shell de plataforma se registra siempre y la disponibilidad de PWA por
 herramienta depende exclusivamente de la capacidad `pwa` de la versión
 publicada (sección anterior). `ENABLE_PWA` queda como flag de entorno
 validado y documentado, sin un punto de lectura en tiempo de ejecución.
+
+La voz se habilita por herramienta cuando existe un proveedor STT o TTS
+configurado, sin depender de un flag global.
 
 ## 5. Deep links
 

@@ -3,13 +3,33 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { providers, toolProviderCredentials } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/security/crypto";
-import { getLLMProvider } from "@/lib/ai/registry";
-import type { LLMProvider } from "@/lib/ai/types";
+import {
+  getEmbeddingProvider,
+  getLLMProvider,
+  getModerationProvider,
+  getSTTProvider,
+  getTTSProvider,
+} from "@/lib/ai/registry";
+import type {
+  EmbeddingProvider,
+  LLMProvider,
+  ModerationProvider,
+  ModerationResult,
+  SpeechToTextProvider,
+  TextToSpeechProvider,
+} from "@/lib/ai/types";
 import { getToolById } from "./repository";
 import { NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { recordAuditEvent } from "@/lib/audit/log";
 
-export const TOOL_CREDENTIAL_PROVIDER_KEYS = ["llm:gemini", "llm:openai-compatible"] as const;
+export const TOOL_CREDENTIAL_PROVIDER_KEYS = [
+  "llm:gemini",
+  "llm:openai-compatible",
+  "embedding:openai-compatible",
+  "moderation:openai-compatible",
+  "stt:openai-compatible",
+  "tts:openai-compatible",
+] as const;
 
 function supportsToolCredentials(providerKey: string): boolean {
   return TOOL_CREDENTIAL_PROVIDER_KEYS.includes(
@@ -54,7 +74,7 @@ export async function saveToolProviderCredential(input: {
     .where(eq(providers.id, input.providerId))
     .limit(1);
   const provider = providerRows[0];
-  if (!provider || provider.kind !== "llm") throw new NotFoundError("Proveedor LLM no encontrado.");
+  if (!provider) throw new NotFoundError("Proveedor no encontrado.");
   if (!supportsToolCredentials(provider.key)) {
     throw new ValidationError("Este proveedor todavía no admite credenciales por herramienta.");
   }
@@ -82,7 +102,7 @@ export async function saveToolProviderCredential(input: {
       apiKeyEncrypted: encrypted,
       keyHint: hint ?? keyHint(decryptSecret(encrypted)),
       baseUrl:
-        provider.key === "llm:openai-compatible"
+        provider.key.endsWith(":openai-compatible")
           ? input.baseUrl?.replace(/\/+$/, "") ?? null
           : null,
     })
@@ -92,7 +112,7 @@ export async function saveToolProviderCredential(input: {
         apiKeyEncrypted: encrypted,
         ...(hint ? { keyHint: hint } : {}),
         baseUrl:
-          provider.key === "llm:openai-compatible"
+          provider.key.endsWith(":openai-compatible")
             ? input.baseUrl?.replace(/\/+$/, "") ?? null
             : null,
         lastTestedAt: null,
@@ -147,6 +167,20 @@ async function loadToolProviderCredential(toolId: string, providerKey: string) {
   return rows[0] ?? null;
 }
 
+async function loadToolCredentialByKind(toolId: string, kind: string) {
+  const rows = await db
+    .select({
+      providerKey: providers.key,
+      apiKeyEncrypted: toolProviderCredentials.apiKeyEncrypted,
+      baseUrl: toolProviderCredentials.baseUrl,
+    })
+    .from(toolProviderCredentials)
+    .innerJoin(providers, eq(providers.id, toolProviderCredentials.providerId))
+    .where(and(eq(toolProviderCredentials.toolId, toolId), eq(providers.kind, kind)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 export async function getToolLLMProvider(toolId: string, providerKey: string): Promise<LLMProvider> {
   const credential = await loadToolProviderCredential(toolId, providerKey);
   if (!credential) return getLLMProvider(providerKey);
@@ -156,11 +190,70 @@ export async function getToolLLMProvider(toolId: string, providerKey: string): P
   });
 }
 
+export async function getToolEmbeddingProvider(toolId: string): Promise<EmbeddingProvider> {
+  const credential = await loadToolCredentialByKind(toolId, "embedding");
+  if (!credential) return getEmbeddingProvider();
+  return getEmbeddingProvider(credential.providerKey, {
+    apiKey: decryptSecret(credential.apiKeyEncrypted),
+    baseUrl: credential.baseUrl,
+  });
+}
+
+export async function getToolModerationProvider(toolId: string): Promise<ModerationProvider> {
+  const credential = await loadToolCredentialByKind(toolId, "moderation");
+  if (!credential) return getModerationProvider();
+  return getModerationProvider(credential.providerKey, {
+    apiKey: decryptSecret(credential.apiKeyEncrypted),
+    baseUrl: credential.baseUrl,
+  });
+}
+
+export async function moderateForTool(toolId: string, text: string): Promise<ModerationResult> {
+  const platformResult = await getModerationProvider().evaluate({ text });
+  if (platformResult.flagged) return platformResult;
+  const credential = await loadToolCredentialByKind(toolId, "moderation");
+  if (!credential) return platformResult;
+  const toolProvider = getModerationProvider(credential.providerKey, {
+    apiKey: decryptSecret(credential.apiKeyEncrypted),
+    baseUrl: credential.baseUrl,
+  });
+  return toolProvider.evaluate({ text });
+}
+
+export async function getToolSTTProvider(toolId: string): Promise<SpeechToTextProvider> {
+  const credential = await loadToolCredentialByKind(toolId, "stt");
+  if (!credential) return getSTTProvider();
+  return getSTTProvider(credential.providerKey, {
+    apiKey: decryptSecret(credential.apiKeyEncrypted),
+    baseUrl: credential.baseUrl,
+  });
+}
+
+export async function getToolTTSProvider(toolId: string): Promise<TextToSpeechProvider> {
+  const credential = await loadToolCredentialByKind(toolId, "tts");
+  if (!credential) return getTTSProvider();
+  return getTTSProvider(credential.providerKey, {
+    apiKey: decryptSecret(credential.apiKeyEncrypted),
+    baseUrl: credential.baseUrl,
+  });
+}
+
+export async function getToolVoiceAvailability(
+  toolId: string,
+): Promise<{ input: boolean; output: boolean }> {
+  const [stt, tts] = await Promise.all([getToolSTTProvider(toolId), getToolTTSProvider(toolId)]);
+  return {
+    input: stt.key !== "disabled",
+    output: tts.key !== "disabled",
+  };
+}
+
 export async function testToolProviderCredential(toolId: string, providerId: string) {
   const rows = await db
     .select({
       credentialId: toolProviderCredentials.id,
       providerKey: providers.key,
+      providerKind: providers.kind,
     })
     .from(toolProviderCredentials)
     .innerJoin(providers, eq(providers.id, toolProviderCredentials.providerId))
@@ -174,7 +267,20 @@ export async function testToolProviderCredential(toolId: string, providerId: str
   const selected = rows[0];
   if (!selected) throw new NotFoundError("La herramienta no tiene una clave configurada para este proveedor.");
 
-  const health = await (await getToolLLMProvider(toolId, selected.providerKey)).healthcheck();
+  const provider =
+    selected.providerKind === "llm"
+      ? await getToolLLMProvider(toolId, selected.providerKey)
+      : selected.providerKind === "embedding"
+        ? await getToolEmbeddingProvider(toolId)
+        : selected.providerKind === "moderation"
+          ? await getToolModerationProvider(toolId)
+          : selected.providerKind === "stt"
+            ? await getToolSTTProvider(toolId)
+            : selected.providerKind === "tts"
+              ? await getToolTTSProvider(toolId)
+              : null;
+  if (!provider) throw new ValidationError("Tipo de proveedor no compatible.");
+  const health = await provider.healthcheck();
   await db
     .update(toolProviderCredentials)
     .set({

@@ -19,7 +19,6 @@ env:
   DATABASE_URL: postgres://postgres:postgres@localhost:5432/crisis_platform
   DATABASE_POOL_URL: postgres://postgres:postgres@localhost:5432/crisis_platform
   APP_ENV: development
-  ENABLE_VOICE: "true"
   STT_PROVIDER: fake
   TTS_PROVIDER: fake
   # boolFromString in lib/env.ts defaults an UNSET var to false, not to .env.example's

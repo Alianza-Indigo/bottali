@@ -269,15 +269,15 @@ vez de reinventarse por cada fuente de contenido no confiable.
 
 ## 7. Moderación de contenido
 
-`lib/ai/registry.ts` expone `getModerationProvider()`, que selecciona la
-implementación según `env.MODERATION_PROVIDER`:
+`lib/tools/provider-credentials.ts` expone `moderateForTool()`. Primero
+aplica el proveedor global como política mínima y, si existe, evalúa también
+con el proveedor configurado para la herramienta:
 
 - `"openai-compatible"` → `OpenAICompatibleModerationProvider` (requiere
   `MODERATION_API_KEY`; lanza si falta).
-- cualquier otro valor (por defecto `"fake"`) → `FakeModerationProvider`,
-  válido solo para desarrollo/demostración — `scripts/verify-env.ts` falla el
-  chequeo si `APP_ENV=production` y `MODERATION_PROVIDER` sigue en `fake`
-  (ver `docs/deployment-vercel.md`).
+- cualquier otro valor (por defecto `"fake"`) → `FakeModerationProvider`.
+  Una credencial por herramienta puede sustituir el transporte auxiliar sin
+  exponer su clave.
 
 Las políticas de moderación por herramienta (`safetyPoliciesSchema`,
 `lib/validation/tools.ts`) son configurables por versión de herramienta:
@@ -295,7 +295,7 @@ mensaje del usuario como `COMPLETED`:
 ```ts
 const inputModeration = ctx.config.safetyPolicies?.inputModeration ?? true;
 if (inputModeration) {
-  const moderation = await getModerationProvider().evaluate({ text: params.content });
+  const moderation = await moderateForTool(ctx.tool.id, params.content);
   if (moderation.flagged) {
     await db.insert(messages).values({
       conversationId: params.conversationId,
@@ -335,7 +335,7 @@ async function checkWindow(force: boolean): Promise<{ blocked: boolean; toForwar
     return { blocked: false, toForward };
   }
   if (!force && pendingWindow.length < MODERATION_WINDOW_CHARS) return { blocked: false, toForward: "" };
-  const moderation = await getModerationProvider().evaluate({ text: fullText });
+  const moderation = await moderateForTool(tool.id, fullText);
   moderationResult = moderation;
   if (moderation.flagged) return { blocked: true, toForward: "" };
   const toForward = pendingWindow;
@@ -354,9 +354,9 @@ visible no pueden compartir un mismo canal en vivo), la moderación de salida
 se aplica de una sola vez sobre el texto final vía `moderateFinalText()`:
 
 ```ts
-async function moderateFinalText(text: string, outputModerationEnabled: boolean) {
+async function moderateFinalText(toolId: string, text: string, outputModerationEnabled: boolean) {
   if (!text || !outputModerationEnabled) return { blocked: false, moderationResult: null };
-  const moderation = await getModerationProvider().evaluate({ text });
+  const moderation = await moderateForTool(toolId, text);
   return { blocked: moderation.flagged, moderationResult: moderation };
 }
 ```
@@ -367,6 +367,11 @@ El "capability" `externalApis` permite que una herramienta llame APIs
 externas configuradas por un administrador (nunca por el usuario final ni por
 el propio modelo). El modelo solo ve un nombre de acción fijo y un cuerpo JSON
 opcional — nunca puede indicar ni influir en la URL de destino:
+
+El endpoint puede referenciar una credencial cifrada de su propia
+herramienta. Se admiten Bearer, API key, Basic Auth y OAuth2 Client
+Credentials; los secretos nunca forman parte de la configuración enviada al
+modelo o al navegador.
 
 ```ts
 // lib/ai/tools/external.ts

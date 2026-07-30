@@ -5,7 +5,7 @@ import { db } from "@/lib/db/client";
 import { conversations, toolBehavior, toolBranding, toolCapabilities, tools } from "@/db/schema";
 import { requireCurrentUser } from "@/lib/auth/current-user";
 import { canUserAccessTool } from "@/lib/tools/access";
-import { isVoiceEnabled } from "@/lib/ai/registry";
+import { getToolVoiceAvailability } from "@/lib/tools/provider-credentials";
 import { ChatPageClient } from "@/components/chat/ChatPageClient";
 
 // Per-tool PWA installability (§18): when the published version has the "pwa" capability
@@ -52,10 +52,8 @@ export default async function ToolChatPage({ params }: { params: Promise<{ slug:
     .orderBy(desc(conversations.lastMessageAt))
     .limit(50);
 
-  // Voice is only ever offered when BOTH the platform has a real provider configured
-  // (isVoiceEnabled) AND this specific tool's version enabled it (§16: "no muestres voces
-  // si el proveedor no está configurado").
-  const voiceReady = isVoiceEnabled();
+  // Voice is offered only when the capability and a global or per-tool provider are ready.
+  const voiceAvailability = await getToolVoiceAvailability(tool.id);
 
   return (
     <ChatPageClient
@@ -71,8 +69,8 @@ export default async function ToolChatPage({ params }: { params: Promise<{ slug:
           images: Boolean(capabilities[0]?.images),
           exportEnabled: Boolean(capabilities[0]?.exportEnabled),
           feedback: Boolean(capabilities[0]?.feedback),
-          voiceInput: voiceReady && Boolean(capabilities[0]?.voiceInput),
-          voiceOutput: voiceReady && Boolean(capabilities[0]?.voiceOutput),
+          voiceInput: voiceAvailability.input && Boolean(capabilities[0]?.voiceInput),
+          voiceOutput: voiceAvailability.output && Boolean(capabilities[0]?.voiceOutput),
           quickReplies: Boolean(capabilities[0]?.quickReplies),
           menus: Boolean(capabilities[0]?.menus),
           escalation: Boolean(capabilities[0]?.escalation),

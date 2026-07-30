@@ -103,8 +103,11 @@ export function ChatWindow({
   const loading = conversationQuery.isLoading;
 
   const voicesQuery = useQuery({
-    queryKey: ["voices"],
-    queryFn: () => apiFetch<{ voices: VoiceOption[] }>("/api/v1/voices").then((res) => res.voices),
+    queryKey: ["voices", tool.id],
+    queryFn: () =>
+      apiFetch<{ voices: VoiceOption[] }>(`/api/v1/voices?toolId=${encodeURIComponent(tool.id)}`).then(
+        (res) => res.voices,
+      ),
     enabled: tool.capabilities.voiceOutput,
   });
   const voices = voicesQuery.data ?? [];
@@ -537,7 +540,7 @@ export function ChatWindow({
                   </div>
                 )}
                 {message.role === "assistant" && message.status === "COMPLETED" && tool.capabilities.voiceOutput && voices.length > 0 && (
-                  <VoicePlaybackButton text={message.content} voices={voices} />
+                  <VoicePlaybackButton toolId={tool.id} text={message.content} voices={voices} />
                 )}
               </li>
             ))}
@@ -721,6 +724,7 @@ export function ChatWindow({
         )}
         {tool.capabilities.voiceInput && (
           <VoiceRecorderButton
+            toolId={tool.id}
             disabled={isGenerating}
             onTranscribed={(text) => setInput((prev) => (prev ? `${prev} ${text}` : text))}
           />

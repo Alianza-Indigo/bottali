@@ -116,11 +116,13 @@ El flujo real, de extremo a extremo:
      largo → múltiples chunks, cada uno ≤ `maxChars + overlapChars`; y que
      existe solapamiento real de contenido entre chunks consecutivos (el
      final de un chunk aparece al inicio del siguiente).
-   - **Embeddings**: `getEmbeddingProvider().embedTexts(chunks)` — un solo
-     lote con todos los chunks del documento.
+   - **Embeddings**: `getToolEmbeddingProvider(toolId).embedTexts(chunks)` —
+     usa la credencial de la herramienta o el respaldo global y procesa un
+     solo lote con todos los chunks del documento.
    - `PROCESSING → INDEXING`, se borran los chunks previos del documento
      (relevante en reindexación) y se insertan los nuevos en
-     `knowledge_chunks` con `chunkIndex`, `content` y `embedding`.
+     `knowledge_chunks` con `chunkIndex`, `content`, `embedding` y metadata
+     del proveedor/dimensión usados.
    - `INDEXING → READY`, con `processedAt` y limpieza de `errorCode`/
      `errorMessage`.
    - El job reporta progreso (`10 / 35 / 50 / 80 / 100`) y respeta
@@ -146,13 +148,13 @@ El flujo real, de extremo a extremo:
 
 ### `retrieveRelevantChunks(knowledgeBaseId, query, topK = 5)`
 
-1. Genera el embedding de la consulta con el mismo proveedor de embeddings
-   configurado: `getEmbeddingProvider().embedTexts([query])`.
+1. Genera el embedding de la consulta con el proveedor de la herramienta:
+   `getToolEmbeddingProvider(toolId).embedTexts([query])`.
 2. Trae de `knowledge_chunks` (con `INNER JOIN` a `knowledge_documents`)
    todos los chunks de esa base de conocimiento, y descarta en memoria los
-   que pertenezcan a un documento cuyo `status` no sea `READY` (es decir, un
-   documento `DISABLED`, `FAILED` o en cualquier estado intermedio no aporta
-   contexto).
+   que pertenezcan a un documento cuyo `status` no sea `READY` o cuyo
+   proveedor/dimensión no coincida con el embedding de consulta. Tras cambiar
+   el proveedor de embeddings, los documentos deben reindexarse.
 3. Calcula la similitud coseno entre el embedding de la consulta y el de
    cada chunk:
 
@@ -321,9 +323,9 @@ default `"fake"`):
   `text-embedding-3-small`). El registro instancia este proveedor con
   `dimensions: 1536` fijo.
 
-Como se documenta en `docs/deployment-vercel.md`, `scripts/verify-env.ts`
-falla el chequeo de entorno si `APP_ENV=production` y `EMBEDDING_PROVIDER`
-sigue en `fake`.
+La herramienta puede reemplazar este respaldo con una credencial de
+embeddings propia desde su pestaña APIs. Al cambiar de proveedor, sus
+documentos deben reindexarse para generar vectores compatibles.
 
 ## 7. UI administrativa
 

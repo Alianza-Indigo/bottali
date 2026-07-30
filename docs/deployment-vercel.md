@@ -72,15 +72,17 @@ ID token y emite una sesión propia de Bottali.
 
 ### Proveedores de IA
 
-- `LLM_PROVIDER=openai-compatible` + `LLM_API_KEY` + `LLM_API_BASE_URL` +
-  `LLM_DEFAULT_MODEL`. Lo mismo aplica a `EMBEDDING_PROVIDER`,
-  `MODERATION_PROVIDER`, `STT_PROVIDER`, `TTS_PROVIDER` si se habilitan voz.
-- Dejar cualquiera en su valor `fake` es válido para un entorno de
-  demostración, pero `scripts/verify-env.ts` **falla el chequeo** (exit code 1,
-  bloqueante) si `APP_ENV=production` y cualquiera de `LLM_PROVIDER`,
-  `EMBEDDING_PROVIDER`, `MODERATION_PROVIDER`, `STT_PROVIDER` o
-  `TTS_PROVIDER` sigue en `fake`. `STT_PROVIDER`/`TTS_PROVIDER` sí aceptan
-  `disabled` en producción si la herramienta no usa voz.
+- Las variables `LLM_*`, `EMBEDDING_*`, `MODERATION_*`, `STT_*` y `TTS_*`
+  configuran respaldos globales opcionales.
+- En el modelo BYO recomendado, cada herramienta administra desde su pestaña
+  **APIs** sus propias claves para modelo, embeddings, moderación y voz. Las
+  claves se cifran y nunca se devuelven al navegador.
+- Los endpoints externos pueden usar Bearer, API key, Basic Auth u OAuth2
+  Client Credentials. Cada endpoint sólo puede referenciar una credencial de
+  la misma herramienta.
+- `scripts/verify-env.ts` valida la infraestructura obligatoria, pero no exige
+  proveedores globales porque una instalación puede operar sólo con
+  credenciales por herramienta.
 
 ### Email
 
@@ -91,8 +93,8 @@ ID token y emite una sesión propia de Bottali.
 
 ### Flags y límites
 
-`ENABLE_VOICE`, `ENABLE_FILES`, `ENABLE_PWA`, `ENABLE_ANALYTICS`,
-`MAX_UPLOAD_BYTES`, `SIGNED_URL_TTL_SECONDS`,
+`ENABLE_FILES`, `ENABLE_PWA`, `ENABLE_ANALYTICS`,
+`MAX_UPLOAD_BYTES`,
 `DEFAULT_DAILY_MESSAGE_LIMIT`, `DEFAULT_MONTHLY_TOKEN_LIMIT`,
 `DEFAULT_MONTHLY_COST_LIMIT_CENTS` — valores por defecto razonables para
 producción; ajustar según necesidad de negocio.

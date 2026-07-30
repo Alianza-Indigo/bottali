@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { knowledgeChunks, knowledgeDocuments } from "@/db/schema";
+import { knowledgeBases, knowledgeChunks, knowledgeDocuments } from "@/db/schema";
 import { registerJobHandler } from "../registry";
 import { getStorageAdapter } from "@/lib/storage";
 import { extractText, normalizeText } from "@/lib/knowledge/extraction";
 import { chunkText } from "@/lib/knowledge/chunking";
 import { assertValidDocumentTransition, type KnowledgeDocumentStatus } from "@/lib/knowledge/state-machine";
-import { getEmbeddingProvider } from "@/lib/ai/registry";
+import { getToolEmbeddingProvider } from "@/lib/tools/provider-credentials";
 
 const payloadSchema = z.object({ documentId: z.string().uuid() });
 
@@ -48,7 +48,15 @@ registerJobHandler("knowledge.process_document", async (rawPayload, context) => 
     if (chunks.length === 0) throw new Error("El documento no produjo fragmentos indexables.");
     await context.reportProgress(50);
 
-    const embeddings = await getEmbeddingProvider().embedTexts(chunks);
+    const baseRows = await db
+      .select({ toolId: knowledgeBases.toolId })
+      .from(knowledgeBases)
+      .where(eq(knowledgeBases.id, doc.knowledgeBaseId))
+      .limit(1);
+    const toolId = baseRows[0]?.toolId;
+    if (!toolId) throw new Error("La base de conocimiento no está vinculada a una herramienta.");
+    const embeddingProvider = await getToolEmbeddingProvider(toolId);
+    const embeddings = await embeddingProvider.embedTexts(chunks);
     await context.reportProgress(80);
 
     await setStatus(documentId, "PROCESSING", "INDEXING");
@@ -64,6 +72,10 @@ registerJobHandler("knowledge.process_document", async (rawPayload, context) => 
         chunkIndex: i,
         content,
         embedding,
+        metadata: {
+          embeddingProvider: embeddingProvider.key,
+          embeddingDimensions: embeddingProvider.dimensions,
+        },
       });
     }
 

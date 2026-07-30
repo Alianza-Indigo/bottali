@@ -32,6 +32,8 @@ export interface ToolBuilderProps {
     lastTestedAt: string | null;
     lastTestStatus: string | null;
   }>;
+  externalCredentials: Array<{ id: string; name: string; authType: string }>;
+  canManageCredentials: boolean;
   knowledgeBase: { id: string; name: string; description: string | null; disabled: boolean } | null;
   knowledgeDocuments: Array<{ id: string; name: string; status: string; sizeBytes: number }>;
 }
@@ -58,11 +60,14 @@ export function ToolBuilder({
   versions,
   providers,
   providerCredentials,
+  externalCredentials,
+  canManageCredentials,
   knowledgeBase,
   knowledgeDocuments,
 }: ToolBuilderProps) {
   const [tab, setTab] = useState<TabKey>("identity");
   const visibleStatus = getVisibleToolStatus(tool.status);
+  const visibleTabs = TABS.filter((item) => item.key !== "apis" || canManageCredentials);
 
   return (
     <div className="flex flex-col gap-6">
@@ -75,7 +80,7 @@ export function ToolBuilder({
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <AdminPanel contentClassName="">
           <nav aria-label="Secciones de configuración" className="flex gap-1 overflow-x-auto border-b border-border p-2">
-            {TABS.map((t) => (
+            {visibleTabs.map((t) => (
               <Button key={t.key} size="sm" variant={tab === t.key ? "primary" : "ghost"} onClick={() => setTab(t.key)}>
                 {t.label}
               </Button>
@@ -95,14 +100,22 @@ export function ToolBuilder({
               />
             )}
             {tab === "models" && <ModelsSection toolId={tool.id} versionId={versionId} initial={config.models} providers={providers} />}
-            {tab === "apis" && (
+            {tab === "apis" && canManageCredentials && (
               <ApiCredentialsSection
                 toolId={tool.id}
                 providers={providers}
                 initialCredentials={providerCredentials}
               />
             )}
-            {tab === "capabilities" && <CapabilitiesSection toolId={tool.id} versionId={versionId} initial={config.capabilities} />}
+            {tab === "capabilities" && (
+              <CapabilitiesSection
+                toolId={tool.id}
+                versionId={versionId}
+                initial={config.capabilities}
+                externalCredentials={externalCredentials}
+                canManageCredentials={canManageCredentials}
+              />
+            )}
             {tab === "access" && <AccessSection toolId={tool.id} versionId={versionId} initial={config.accessRules} />}
             {tab === "safety" && <SafetySection toolId={tool.id} versionId={versionId} initial={config.safetyPolicies} />}
             {tab === "pwa" && <PwaSection toolId={tool.id} versionId={versionId} initial={config.pwaConfig} />}

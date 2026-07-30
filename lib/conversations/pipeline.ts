@@ -5,7 +5,7 @@ import { conversations, knowledgeBases, messages, notifications, providerModels,
 import type { FullVersionConfig } from "@/lib/tools/repository";
 import { canUserAccessTool } from "@/lib/tools/access";
 import { loadVersionConfig } from "@/lib/tools/repository";
-import { getModerationProvider } from "@/lib/ai/registry";
+import { moderateForTool } from "@/lib/tools/provider-credentials";
 import { estimateCostCents } from "@/lib/ai/usage/cost";
 import type { GenerationMessage, GenerationResult, GenerationUsage, LLMProvider, ToolCall, ToolSpec } from "@/lib/ai/types";
 import { INTERNAL_TOOLS, getInternalTool, listToolSpecsForLLM } from "@/lib/ai/tools/registry";
@@ -185,9 +185,13 @@ function toolNeedsConfirmation(toolName: string, confirmationsRequired: string[]
   return Boolean(definition?.requiresConfirmation) || confirmationsRequired.includes(toolName);
 }
 
-async function moderateFinalText(text: string, outputModerationEnabled: boolean): Promise<{ blocked: boolean; moderationResult: unknown }> {
+async function moderateFinalText(
+  toolId: string,
+  text: string,
+  outputModerationEnabled: boolean,
+): Promise<{ blocked: boolean; moderationResult: unknown }> {
   if (!text || !outputModerationEnabled) return { blocked: false, moderationResult: null };
-  const moderation = await getModerationProvider().evaluate({ text });
+  const moderation = await moderateForTool(toolId, text);
   return { blocked: moderation.flagged, moderationResult: moderation };
 }
 
@@ -615,7 +619,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
       return { blocked: false, toForward };
     }
     if (!force && pendingWindow.length < MODERATION_WINDOW_CHARS) return { blocked: false, toForward: "" };
-    const moderation = await getModerationProvider().evaluate({ text: fullText });
+    const moderation = await moderateForTool(tool.id, fullText);
     moderationResult = moderation;
     if (moderation.flagged) return { blocked: true, toForward: "" };
     const toForward = pendingWindow;
@@ -684,7 +688,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
             fullText = outcome.finalResult.content;
             finishReason = outcome.finalResult.finishReason;
           }
-          const modResult = await moderateFinalText(fullText, outputModeration);
+          const modResult = await moderateFinalText(tool.id, fullText, outputModeration);
           blocked = modResult.blocked;
           moderationResult = modResult.moderationResult;
           if (!blocked && fullText) yield { type: "delta", text: fullText };
@@ -772,7 +776,7 @@ export async function* sendMessage(params: SendMessageParams): AsyncGenerator<St
 
   const inputModeration = ctx.config.safetyPolicies?.inputModeration ?? true;
   if (inputModeration) {
-    const moderation = await getModerationProvider().evaluate({ text: params.content });
+    const moderation = await moderateForTool(ctx.tool.id, params.content);
     if (moderation.flagged) {
       await db.insert(messages).values({
         conversationId: params.conversationId,
@@ -1004,7 +1008,7 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
         fullText = outcome.finalResult.content;
         finishReason = outcome.finalResult.finishReason;
       }
-      const modResult = await moderateFinalText(fullText, outputModeration);
+      const modResult = await moderateFinalText(tool.id, fullText, outputModeration);
       blocked = modResult.blocked;
       moderationResult = modResult.moderationResult;
       if (!blocked && fullText) yield { type: "delta", text: fullText };

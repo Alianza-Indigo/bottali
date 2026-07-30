@@ -115,7 +115,8 @@ Cliente ── POST /api/v1/conversations/[id]/messages ──▶ sendMessage()
   2. expirePendingConfirmationsForConversation() — una confirmación pendiente
      vieja no bloquea un mensaje nuevo; su reserva se libera
   3. Moderación de entrada (safetyPolicies.inputModeration) vía
-     getModerationProvider().evaluate() → si flagged, se persiste el mensaje
+     moderateForTool() → aplica el mínimo global y la credencial propia de la
+     herramienta; si flagged, se persiste el mensaje
      como BLOCKED y se corta aquí
   4. Se inserta el mensaje de usuario (role="user") en `messages`
   5. Adjuntos: si capabilities.files y hay attachedFileIds, se re-validan
@@ -133,7 +134,8 @@ Cliente ── POST /api/v1/conversations/[id]/messages ──▶ sendMessage()
      - system prompt = behavior.systemPrompt + reglas + memoria + bloque RAG
   8. Tools disponibles: allowedInternalTools (gateado por
      capabilities.internalTools) + externalApiEndpoints (gateado por
-     capabilities.externalApis) → ToolSpec[] para el LLM
+     capabilities.externalApis; cada endpoint puede referenciar una
+     credencial cifrada de la misma herramienta) → ToolSpec[] para el LLM
   9. Si hay tools: runToolRoundLoop() (ver 4.2); si no: streaming directo
      provider.stream() con moderación de salida en ventanas rodantes
   10. finalizeGeneration(): persiste el mensaje assistant, guarda archivos
@@ -273,12 +275,11 @@ requerido falta):
 | Voz (STT) | `STT_PROVIDER` | `OpenAICompatibleSpeechToTextProvider` | `FakeSpeechToTextProvider` / `DisabledSpeechToTextProvider` |
 | Voz (TTS) | `TTS_PROVIDER` | `OpenAICompatibleTextToSpeechProvider` | `FakeTextToSpeechProvider` / `DisabledTextToSpeechProvider` |
 
-Todas las implementaciones reales apuntan a cualquier endpoint compatible con
-la API de OpenAI (`LLM_API_BASE_URL`), lo que permite usar proveedores
-alternativos sin cambiar código. `scripts/verify-env.ts` bloquea el arranque en
-`APP_ENV=production` si cualquiera de `LLM_PROVIDER`/`EMBEDDING_PROVIDER`/
-`MODERATION_PROVIDER`/`STT_PROVIDER`/`TTS_PROVIDER` sigue en `fake` (STT/TTS sí
-aceptan `disabled`).
+Todas las implementaciones reales apuntan a endpoints compatibles con la API
+de OpenAI. Las variables de entorno actúan como respaldo global; una
+herramienta puede aportar credenciales cifradas independientes para LLM,
+embeddings, moderación, STT y TTS. Por ello `scripts/verify-env.ts` valida la
+infraestructura compartida, no obliga a configurar proveedores globales.
 
 `lib/ai/tools/` contiene las **tools internas** invocables por el modelo
 (`registry.ts`): `calculator`, `datetime`, `generate_text_document`,

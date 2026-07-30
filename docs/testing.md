@@ -378,7 +378,7 @@ Esta suite corre en CI pero **no bloquea el merge** (ver sección siguiente).
 `push` a cualquier rama (`branches: ["**"]`) y en cada `pull_request`, con
 `concurrency` configurada para cancelar una corrida anterior en la misma
 rama cuando llega una nueva. Todos los jobs comparten variables de entorno
-fijas y no secretas (`APP_SECRET_KEY`, `DATABASE_URL`, `ENABLE_VOICE`,
+  fijas y no secretas (`APP_SECRET_KEY`, `DATABASE_URL`,
 `STT_PROVIDER=fake`, `TTS_PROVIDER=fake`, `ENABLE_FILES=true`,
 `ENABLE_PWA=true`, `ENABLE_ANALYTICS=true`, etc.) para que el esquema de
 `lib/env.ts` valide igual en todos lados.

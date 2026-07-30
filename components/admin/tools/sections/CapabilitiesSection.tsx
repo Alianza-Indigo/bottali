@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import { capabilitiesSchema, type CapabilitiesInput } from "@/lib/validation/tools";
 import { Button } from "@/components/ui/Button";
@@ -38,7 +39,19 @@ const CAPABILITY_LABELS: Record<keyof Omit<CapabilitiesInput, "externalApiEndpoi
   deepLinks: "Deep links",
 };
 
-export function CapabilitiesSection({ toolId, versionId, initial }: { toolId: string; versionId: string; initial: Capabilities | null }) {
+export function CapabilitiesSection({
+  toolId,
+  versionId,
+  initial,
+  externalCredentials,
+  canManageCredentials,
+}: {
+  toolId: string;
+  versionId: string;
+  initial: Capabilities | null;
+  externalCredentials: Array<{ id: string; name: string; authType: string }>;
+  canManageCredentials: boolean;
+}) {
   const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const {
     register,
@@ -60,6 +73,18 @@ export function CapabilitiesSection({ toolId, versionId, initial }: { toolId: st
   });
   const { fields, append, remove } = useFieldArray({ control, name: "externalApiEndpoints" });
   const externalApis = watch("externalApis");
+  const externalCredentialQuery = useQuery({
+    queryKey: ["admin", "tools", toolId, "external-credentials"],
+    queryFn: () =>
+      apiFetch<{
+        credentials: Array<{ id: string; name: string; authType: string }>;
+      }>(`/api/v1/admin/tools/${toolId}/external-credentials`).then(
+        (result) => result.credentials,
+      ),
+    initialData: externalCredentials,
+    enabled: canManageCredentials,
+  });
+  const credentialOptions = externalCredentialQuery.data;
 
   const onSubmit = async (data: CapabilitiesInput) => {
     setMessage(null);
@@ -147,6 +172,21 @@ export function CapabilitiesSection({ toolId, versionId, initial }: { toolId: st
                   {...register(`externalApiEndpoints.${index}.description`)}
                 />
               </div>
+              <div className="col-span-2">
+                <Label htmlFor={`endpoint-credential-${index}`}>Credencial</Label>
+                <select
+                  id={`endpoint-credential-${index}`}
+                  {...register(`externalApiEndpoints.${index}.credentialId`)}
+                  className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink"
+                >
+                  <option value="">Sin autenticación</option>
+                  {credentialOptions.map((credential) => (
+                    <option key={credential.id} value={credential.id}>
+                      {credential.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <Button type="button" size="sm" variant="ghost" className="col-span-2 justify-self-start" onClick={() => remove(index)}>
                 Quitar
               </Button>
@@ -157,7 +197,9 @@ export function CapabilitiesSection({ toolId, versionId, initial }: { toolId: st
             size="sm"
             variant="secondary"
             className="self-start"
-            onClick={() => append({ name: "", url: "", method: "GET", description: "" })}
+            onClick={() =>
+              append({ name: "", url: "", method: "GET", description: "", credentialId: undefined })
+            }
           >
             Agregar endpoint
           </Button>

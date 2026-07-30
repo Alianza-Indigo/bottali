@@ -83,6 +83,23 @@ export async function syncProvidersFromEnv(db: Database): Promise<void> {
           ? [{ modelKey: "fake-embedding", displayName: "Fake Embedding (pruebas)", contextWindow: 0 }]
           : [{ modelKey: env.EMBEDDING_MODEL, displayName: env.EMBEDDING_MODEL, contextWindow: 0 }],
     },
+    ...(env.EMBEDDING_PROVIDER === "openai-compatible"
+      ? []
+      : [
+          {
+            kind: "embedding" as const,
+            key: "openai-compatible",
+            name: "Embeddings OpenAI compatible",
+            enabled: false,
+            models: [
+              {
+                modelKey: "text-embedding-3-small",
+                displayName: "text-embedding-3-small",
+                contextWindow: 0,
+              },
+            ],
+          },
+        ]),
     {
       kind: "moderation",
       key: env.MODERATION_PROVIDER,
@@ -90,6 +107,17 @@ export async function syncProvidersFromEnv(db: Database): Promise<void> {
       enabled: env.MODERATION_PROVIDER === "fake" || Boolean(env.MODERATION_API_KEY),
       models: [],
     },
+    ...(env.MODERATION_PROVIDER === "openai-compatible"
+      ? []
+      : [
+          {
+            kind: "moderation" as const,
+            key: "openai-compatible",
+            name: "Moderación OpenAI compatible",
+            enabled: false,
+            models: [],
+          },
+        ]),
     {
       kind: "stt",
       key: env.STT_PROVIDER,
@@ -97,6 +125,17 @@ export async function syncProvidersFromEnv(db: Database): Promise<void> {
       enabled: env.STT_PROVIDER === "fake" || (env.STT_PROVIDER === "openai-compatible" && Boolean(env.STT_API_KEY)),
       models: [],
     },
+    ...(env.STT_PROVIDER === "openai-compatible"
+      ? []
+      : [
+          {
+            kind: "stt" as const,
+            key: "openai-compatible",
+            name: "Voz a texto OpenAI compatible",
+            enabled: false,
+            models: [],
+          },
+        ]),
     {
       kind: "tts",
       key: env.TTS_PROVIDER,
@@ -104,6 +143,17 @@ export async function syncProvidersFromEnv(db: Database): Promise<void> {
       enabled: env.TTS_PROVIDER === "fake" || (env.TTS_PROVIDER === "openai-compatible" && Boolean(env.TTS_API_KEY)),
       models: [],
     },
+    ...(env.TTS_PROVIDER === "openai-compatible"
+      ? []
+      : [
+          {
+            kind: "tts" as const,
+            key: "openai-compatible",
+            name: "Texto a voz OpenAI compatible",
+            enabled: false,
+            models: [],
+          },
+        ]),
   ];
 
   for (const spec of specs) {

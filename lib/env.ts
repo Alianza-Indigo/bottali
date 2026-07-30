@@ -63,14 +63,12 @@ const envSchema = z.object({
   TTS_API_KEY: z.string().optional(),
 
   MAX_UPLOAD_BYTES: numberFromString(26214400),
-  SIGNED_URL_TTL_SECONDS: numberFromString(900),
   GENERATED_FILE_TTL_SECONDS: numberFromString(2592000),
   DEFAULT_DAILY_MESSAGE_LIMIT: numberFromString(200),
   DEFAULT_MONTHLY_TOKEN_LIMIT: numberFromString(2000000),
   DEFAULT_MONTHLY_COST_LIMIT_CENTS: numberFromString(5000),
 
   JOB_PROVIDER: z.enum(["sync", "vercel-queue"]).default("sync"),
-  JOB_SECRET: z.string().optional(),
   CRON_SECRET: z.string().optional(),
 
   // Real anti-brute-force control in production (20/15min per IP is deliberately tight for
@@ -79,7 +77,6 @@ const envSchema = z.object({
   // is configurable rather than hardcoded, letting CI raise it without weakening production.
   LOGIN_RATE_LIMIT_MAX: numberFromString(20),
 
-  ENABLE_VOICE: boolFromString,
   ENABLE_FILES: boolFromString,
   ENABLE_PWA: boolFromString,
   ENABLE_ANALYTICS: boolFromString,

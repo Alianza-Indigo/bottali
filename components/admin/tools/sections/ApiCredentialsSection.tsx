@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
+import { ExternalCredentialsManager } from "./ExternalCredentialsManager";
 
 interface ProviderOption {
   id: string;
@@ -26,7 +27,22 @@ interface CredentialSummary {
   lastTestStatus: string | null;
 }
 
-const SUPPORTED_PROVIDER_KEYS = new Set(["llm:gemini", "llm:openai-compatible"]);
+const SUPPORTED_PROVIDER_KEYS = new Set([
+  "llm:gemini",
+  "llm:openai-compatible",
+  "embedding:openai-compatible",
+  "moderation:openai-compatible",
+  "stt:openai-compatible",
+  "tts:openai-compatible",
+]);
+
+const PROVIDER_KIND_LABELS: Record<string, string> = {
+  llm: "Modelo de lenguaje",
+  embedding: "Embeddings",
+  moderation: "Moderación",
+  stt: "Voz a texto",
+  tts: "Texto a voz",
+};
 
 function ProviderCredentialRow({
   toolId,
@@ -41,8 +57,9 @@ function ProviderCredentialRow({
 }) {
   const queryClient = useQueryClient();
   const [apiKey, setApiKey] = useState("");
+  const supportsBaseUrl = provider.key.endsWith(":openai-compatible");
   const [baseUrl, setBaseUrl] = useState(
-    credential?.baseUrl ?? (provider.key === "llm:openai-compatible" ? "https://api.openai.com/v1" : ""),
+    credential?.baseUrl ?? (supportsBaseUrl ? "https://api.openai.com/v1" : ""),
   );
   const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState<"save" | "test" | "delete" | null>(null);
@@ -62,7 +79,7 @@ function ProviderCredentialRow({
         method: "PUT",
         body: JSON.stringify({
           ...(apiKey ? { apiKey } : {}),
-          ...(provider.key === "llm:openai-compatible" ? { baseUrl } : {}),
+          ...(supportsBaseUrl ? { baseUrl } : {}),
         }),
       });
       setApiKey("");
@@ -131,6 +148,8 @@ function ProviderCredentialRow({
         <div>
           <h3 className="text-sm font-semibold text-ink">{provider.name}</h3>
           <p className="mt-1 text-xs text-ink-muted">
+            {PROVIDER_KIND_LABELS[provider.kind] ?? provider.kind}
+            {" · "}
             {configured ? `Clave ${credential?.keyHint}` : "Sin credencial propia"}
           </p>
         </div>
@@ -147,7 +166,7 @@ function ProviderCredentialRow({
       {message && <Alert tone={message.tone}>{message.text}</Alert>}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <div className={provider.key === "llm:openai-compatible" ? "" : "lg:col-span-2"}>
+        <div className={supportsBaseUrl ? "" : "lg:col-span-2"}>
           <Label htmlFor={`api-key-${provider.id}`}>
             {configured ? "Reemplazar clave API" : "Clave API"}
           </Label>
@@ -175,7 +194,7 @@ function ProviderCredentialRow({
           </div>
         </div>
 
-        {provider.key === "llm:openai-compatible" && (
+        {supportsBaseUrl && (
           <div>
             <Label htmlFor={`base-url-${provider.id}`}>URL base</Label>
             <Input
@@ -239,7 +258,7 @@ export function ApiCredentialsSection({
 }) {
   const [credentials, setCredentials] = useState(initialCredentials);
   const supportedProviders = providers.filter(
-    (provider) => provider.kind === "llm" && SUPPORTED_PROVIDER_KEYS.has(provider.key),
+    (provider) => SUPPORTED_PROVIDER_KEYS.has(provider.key),
   );
 
   async function refresh() {
@@ -262,6 +281,7 @@ export function ApiCredentialsSection({
           onChanged={refresh}
         />
       ))}
+      <ExternalCredentialsManager toolId={toolId} />
     </div>
   );
 }

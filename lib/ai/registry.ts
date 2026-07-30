@@ -18,12 +18,12 @@ let moderationProvider: ModerationProvider | undefined;
 let sttProvider: SpeechToTextProvider | undefined;
 let ttsProvider: TextToSpeechProvider | undefined;
 
-export interface LLMProviderCredentials {
+export interface ProviderCredentials {
   apiKey: string;
   baseUrl?: string | null;
 }
 
-export function getLLMProvider(providerKey?: string, credentials?: LLMProviderCredentials): LLMProvider {
+export function getLLMProvider(providerKey?: string, credentials?: ProviderCredentials): LLMProvider {
   const env = getEnv();
   const defaultProviderKey = `llm:${env.LLM_PROVIDER}`;
   const resolvedKey = providerKey ?? defaultProviderKey;
@@ -73,75 +73,116 @@ export function getFallbackLLMProvider(): LLMProvider | null {
   return llmFallbackProvider;
 }
 
-export function getEmbeddingProvider(): EmbeddingProvider {
-  if (embeddingProvider) return embeddingProvider;
+export function getEmbeddingProvider(
+  providerKey?: string,
+  credentials?: ProviderCredentials,
+): EmbeddingProvider {
   const env = getEnv();
-  if (env.EMBEDDING_PROVIDER === "openai-compatible") {
-    if (!env.EMBEDDING_API_KEY) throw new Error("EMBEDDING_PROVIDER=openai-compatible requiere EMBEDDING_API_KEY.");
-    embeddingProvider = new OpenAICompatibleEmbeddingProvider({
-      apiKey: env.EMBEDDING_API_KEY,
-      baseUrl: env.EMBEDDING_API_BASE_URL,
+  const defaultKey = `embedding:${env.EMBEDDING_PROVIDER}`;
+  const resolvedKey = providerKey ?? defaultKey;
+  if (!credentials && embeddingProvider && resolvedKey === defaultKey) return embeddingProvider;
+  let provider: EmbeddingProvider;
+  if (resolvedKey === "embedding:openai-compatible") {
+    const apiKey =
+      credentials?.apiKey ??
+      (env.EMBEDDING_PROVIDER === "openai-compatible" ? env.EMBEDDING_API_KEY : undefined);
+    if (!apiKey) throw new Error("Embeddings requieren una clave API en la herramienta o EMBEDDING_API_KEY.");
+    provider = new OpenAICompatibleEmbeddingProvider({
+      apiKey,
+      baseUrl: credentials?.baseUrl ?? env.EMBEDDING_API_BASE_URL,
       model: env.EMBEDDING_MODEL,
       dimensions: 1536,
       timeoutMs: 20000,
     });
+  } else if (resolvedKey === defaultKey && env.EMBEDDING_PROVIDER === "fake") {
+    provider = new FakeEmbeddingProvider();
   } else {
-    embeddingProvider = new FakeEmbeddingProvider();
+    throw new Error(`Proveedor de embeddings no configurado: ${resolvedKey}.`);
   }
-  return embeddingProvider;
+  if (!credentials && resolvedKey === defaultKey) embeddingProvider = provider;
+  return provider;
 }
 
-export function getModerationProvider(): ModerationProvider {
-  if (moderationProvider) return moderationProvider;
+export function getModerationProvider(
+  providerKey?: string,
+  credentials?: ProviderCredentials,
+): ModerationProvider {
   const env = getEnv();
-  if (env.MODERATION_PROVIDER === "openai-compatible") {
-    if (!env.MODERATION_API_KEY) throw new Error("MODERATION_PROVIDER=openai-compatible requiere MODERATION_API_KEY.");
-    moderationProvider = new OpenAICompatibleModerationProvider({
-      apiKey: env.MODERATION_API_KEY,
-      baseUrl: env.LLM_API_BASE_URL,
+  const defaultKey = `moderation:${env.MODERATION_PROVIDER}`;
+  const resolvedKey = providerKey ?? defaultKey;
+  if (!credentials && moderationProvider && resolvedKey === defaultKey) return moderationProvider;
+  let provider: ModerationProvider;
+  if (resolvedKey === "moderation:openai-compatible") {
+    const apiKey =
+      credentials?.apiKey ??
+      (env.MODERATION_PROVIDER === "openai-compatible" ? env.MODERATION_API_KEY : undefined);
+    if (!apiKey) throw new Error("Moderación requiere una clave API en la herramienta o MODERATION_API_KEY.");
+    provider = new OpenAICompatibleModerationProvider({
+      apiKey,
+      baseUrl: credentials?.baseUrl ?? env.LLM_API_BASE_URL,
       timeoutMs: 10000,
     });
+  } else if (resolvedKey === defaultKey && env.MODERATION_PROVIDER === "fake") {
+    provider = new FakeModerationProvider();
   } else {
-    moderationProvider = new FakeModerationProvider();
+    throw new Error(`Proveedor de moderación no configurado: ${resolvedKey}.`);
   }
-  return moderationProvider;
+  if (!credentials && resolvedKey === defaultKey) moderationProvider = provider;
+  return provider;
 }
 
-export function getSTTProvider(): SpeechToTextProvider {
-  if (sttProvider) return sttProvider;
+export function getSTTProvider(
+  providerKey?: string,
+  credentials?: ProviderCredentials,
+): SpeechToTextProvider {
   const env = getEnv();
-  if (env.STT_PROVIDER === "openai-compatible" && env.STT_API_KEY) {
-    sttProvider = new OpenAICompatibleSpeechToTextProvider({
-      apiKey: env.STT_API_KEY,
-      baseUrl: env.LLM_API_BASE_URL,
+  const defaultKey = `stt:${env.STT_PROVIDER}`;
+  const resolvedKey = providerKey ?? defaultKey;
+  if (!credentials && sttProvider && resolvedKey === defaultKey) return sttProvider;
+  let provider: SpeechToTextProvider;
+  if (resolvedKey === "stt:openai-compatible") {
+    const apiKey =
+      credentials?.apiKey ??
+      (env.STT_PROVIDER === "openai-compatible" ? env.STT_API_KEY : undefined);
+    if (!apiKey) return new DisabledSpeechToTextProvider();
+    provider = new OpenAICompatibleSpeechToTextProvider({
+      apiKey,
+      baseUrl: credentials?.baseUrl ?? env.LLM_API_BASE_URL,
       timeoutMs: 30000,
     });
-  } else if (env.STT_PROVIDER === "fake") {
-    sttProvider = new FakeSpeechToTextProvider();
+  } else if (resolvedKey === defaultKey && env.STT_PROVIDER === "fake") {
+    provider = new FakeSpeechToTextProvider();
   } else {
-    sttProvider = new DisabledSpeechToTextProvider();
+    provider = new DisabledSpeechToTextProvider();
   }
-  return sttProvider;
+  if (!credentials && resolvedKey === defaultKey) sttProvider = provider;
+  return provider;
 }
 
-export function getTTSProvider(): TextToSpeechProvider {
-  if (ttsProvider) return ttsProvider;
+export function getTTSProvider(
+  providerKey?: string,
+  credentials?: ProviderCredentials,
+): TextToSpeechProvider {
   const env = getEnv();
-  if (env.TTS_PROVIDER === "openai-compatible" && env.TTS_API_KEY) {
-    ttsProvider = new OpenAICompatibleTextToSpeechProvider({
-      apiKey: env.TTS_API_KEY,
-      baseUrl: env.LLM_API_BASE_URL,
+  const defaultKey = `tts:${env.TTS_PROVIDER}`;
+  const resolvedKey = providerKey ?? defaultKey;
+  if (!credentials && ttsProvider && resolvedKey === defaultKey) return ttsProvider;
+  let provider: TextToSpeechProvider;
+  if (resolvedKey === "tts:openai-compatible") {
+    const apiKey =
+      credentials?.apiKey ??
+      (env.TTS_PROVIDER === "openai-compatible" ? env.TTS_API_KEY : undefined);
+    if (!apiKey) return new DisabledTextToSpeechProvider();
+    provider = new OpenAICompatibleTextToSpeechProvider({
+      apiKey,
+      baseUrl: credentials?.baseUrl ?? env.LLM_API_BASE_URL,
       timeoutMs: 30000,
     });
-  } else if (env.TTS_PROVIDER === "fake") {
-    ttsProvider = new FakeTextToSpeechProvider();
+  } else if (resolvedKey === defaultKey && env.TTS_PROVIDER === "fake") {
+    provider = new FakeTextToSpeechProvider();
   } else {
-    ttsProvider = new DisabledTextToSpeechProvider();
+    provider = new DisabledTextToSpeechProvider();
   }
-  return ttsProvider;
-}
-
-export function isVoiceEnabled(): boolean {
-  const env = getEnv();
-  return env.ENABLE_VOICE && getSTTProvider().key !== "disabled" && getTTSProvider().key !== "disabled";
+  if (!credentials && resolvedKey === defaultKey) ttsProvider = provider;
+  return provider;
 }

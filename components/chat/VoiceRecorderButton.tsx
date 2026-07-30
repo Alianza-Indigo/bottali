@@ -11,7 +11,15 @@ interface TranscribeResponse {
 /** §16: records from the browser microphone, sends the clip to be transcribed, and hands the
  * resulting text back to the composer for editing — it never sends a message on its own. The
  * recording itself is only ever held in memory and discarded once transcription completes. */
-export function VoiceRecorderButton({ onTranscribed, disabled }: { onTranscribed: (text: string) => void; disabled?: boolean }) {
+export function VoiceRecorderButton({
+  toolId,
+  onTranscribed,
+  disabled,
+}: {
+  toolId: string;
+  onTranscribed: (text: string) => void;
+  disabled?: boolean;
+}) {
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +52,7 @@ export function VoiceRecorderButton({ onTranscribed, disabled }: { onTranscribed
         try {
           const form = new FormData();
           form.append("audio", blob, "recording.webm");
+          form.append("toolId", toolId);
           const result = await apiFetch<TranscribeResponse>("/api/v1/speech/transcribe", { method: "POST", body: form });
           onTranscribed(result.text);
         } catch (err) {

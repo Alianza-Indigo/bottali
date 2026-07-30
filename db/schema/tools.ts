@@ -177,6 +177,38 @@ export const toolProviderCredentials = pgTable(
   ],
 );
 
+export const toolExternalCredentials = pgTable(
+  "tool_external_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    toolId: uuid("tool_id")
+      .notNull()
+      .references(() => tools.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 80 }).notNull(),
+    authType: varchar("auth_type", { length: 32 }).notNull(),
+    secretEncrypted: text("secret_encrypted").notNull(),
+    keyHint: varchar("key_hint", { length: 24 }).notNull(),
+    config: jsonb("config")
+      .$type<{
+        headerName?: string;
+        username?: string;
+        clientId?: string;
+        tokenUrl?: string;
+        scope?: string;
+      }>()
+      .notNull()
+      .default({}),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("tool_external_credentials_tool_name_idx").on(table.toolId, table.name),
+    index("tool_external_credentials_tool_idx").on(table.toolId),
+  ],
+);
+
 export const toolCapabilities = pgTable("tool_capabilities", {
   id: uuid("id").primaryKey().defaultRandom(),
   toolVersionId: uuid("tool_version_id")
@@ -209,7 +241,15 @@ export const toolCapabilities = pgTable("tool_capabilities", {
   // invoke by `name`, never supply its own URL, which is what keeps this from being an SSRF
   // vector. See lib/ai/tools/external.ts for the runtime allow-list + fetch guards.
   externalApiEndpoints: jsonb("external_api_endpoints")
-    .$type<Array<{ name: string; url: string; method: "GET" | "POST"; description?: string }>>()
+    .$type<
+      Array<{
+        name: string;
+        url: string;
+        method: "GET" | "POST";
+        description?: string;
+        credentialId?: string;
+      }>
+    >()
     .notNull()
     .default([]),
 });

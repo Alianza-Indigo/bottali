@@ -30,7 +30,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string; providerId: string }> },
 ) {
   try {
-    const user = await requireUserWithPermission("tools.update");
+    const user = await requireUserWithPermission("tools.credentials.manage");
     const { id, providerId } = await params;
     const body = await parseJsonBody(request, credentialSchema);
     await saveToolProviderCredential({
@@ -51,7 +51,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; providerId: string }> },
 ) {
   try {
-    const user = await requireUserWithPermission("tools.update");
+    const user = await requireUserWithPermission("tools.credentials.manage");
     const { id, providerId } = await params;
     await deleteToolProviderCredential({ toolId: id, providerId, actorId: user.id });
     return NextResponse.json({ message: "Credencial eliminada." });

@@ -90,8 +90,8 @@ Resumen de pruebas automatizadas ejecutadas en esta verificación:
 | 60 | No existan botones sin función | ✅ | Búsqueda de manejadores vacíos (`onClick={() => {}}`, `console.log` como única acción, "no implementado"): sin coincidencias en `app/`/`components/`. |
 | 61 | No existan rutas simuladas | ✅ | Toda ruta de API listada en el build de producción (ver salida de `npm run build` en esta verificación) tiene handler real con acceso a Postgres/proveedor real o fake explícitamente documentado (nunca oculto). |
 | 62 | No existan "TODO" en el flujo principal | ✅ | Búsqueda de `TODO`/`FIXME`/`XXX` en `app/`, `lib/`, `components/`, `db/` (excluyendo pruebas): sin coincidencias. |
-| 63 | No existan proveedores falsos visibles en producción | ✅ | Corregido en esta verificación: `scripts/verify-env.ts` solo bloqueaba `LLM_PROVIDER=fake` en producción; se añadieron los mismos chequeos para `EMBEDDING_PROVIDER`, `MODERATION_PROVIDER`, `STT_PROVIDER` y `TTS_PROVIDER`, así `npm run env:check` falla el despliegue si cualquier proveedor fake queda activo con `APP_ENV=production`. |
-| 64 | No se muestre funcionalidad no configurada | ✅ | La UI de voz solo se renderiza si `isVoiceEnabled()` es verdadero y la herramienta tiene la capacidad activada (`app/(user)/tools/[slug]/chat/page.tsx`); el catálogo/admin ocultan proveedores deshabilitados vía `enabled` en `lib/ai/sync-providers.ts`. |
+| 63 | No se confundan respaldos globales con credenciales BYO | ✅ | La pestaña APIs separa modelo, embeddings, moderación y voz; el diagnóstico identifica los proveedores globales como respaldos y sólo reporta conteos de credenciales por herramienta, nunca secretos. |
+| 64 | No se muestre funcionalidad no configurada | ✅ | La UI de voz se renderiza sólo si la capacidad está activa y existe un proveedor global o propio de la herramienta (`getToolVoiceAvailability`); el catálogo/admin oculta proveedores no disponibles para selección de modelos. |
 | 65 | El README permita desplegar en Vercel sin adivinar | ✅ | `README.md` + `docs/deployment-vercel.md` documentan variables de entorno, pasos de `vercel env`, build, migraciones y seed condicional por entorno. No se pudo *ejecutar* el despliegue real (ver #3, #66). |
 | 66 | El proyecto quede preparado, pero no desplegado sin autorización | ✅ | No se ha ejecutado ningún despliegue a Vercel ni se ha hecho push a ningún entorno productivo en esta sesión; solo commits/push a la rama de trabajo `claude/access-ajueor`. |
 
@@ -123,9 +123,9 @@ proyecto) señaló varios hallazgos. Cada uno se verificó contra el código rea
   unit, integración con Postgres real, E2E/seguridad/accesibilidad, rendimiento no bloqueante). Nota:
   que un check sea "requerido" para mergear es una regla de branch protection en Settings, no algo
   que un workflow pueda fijar por sí mismo.
-- **Contradicción de documentación**: `docs/deployment-vercel.md` describía el bloqueo de proveedores
-  fake en producción como una simple advertencia; el comportamiento real (`scripts/verify-env.ts`) es
-  un fallo bloqueante. Corregido el texto.
+- **Evolución BYO**: el chequeo de entorno ya no exige proveedores globales
+  reales, porque cada herramienta puede aportar sus propias credenciales. La
+  infraestructura compartida sí continúa siendo obligatoria.
 - **Fecha "futura" en este documento**: la revisión asumió que la fecha actual era 2026-07-25 y marcó
   el timestamp `2026-07-26` de este archivo como sospechoso. Verificado con el reloj del sistema
   (`date -u`) en el momento de esa verificación: 2026-07-26 era la fecha correcta.

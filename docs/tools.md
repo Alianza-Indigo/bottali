@@ -593,7 +593,10 @@ una tool con nombre `external_api__{name}` (prefijo `EXTERNAL_API_TOOL_PREFIX`)
 y un único parámetro opcional `body` (objeto JSON libre) —el modelo **nunca**
 puede suministrar ni influir la URL de destino, que ya quedó fija en tiempo de
 configuración y validada contra hosts privados (§6.5). `executeExternalApiCall()`
-nunca lanza: cualquier fallo de red, timeout o respuesta no-2xx se traduce en
+nunca recibe secretos del modelo: si el endpoint tiene `credentialId`, el
+servidor resuelve una credencial cifrada de la misma herramienta y agrega la
+autenticación justo antes del `fetch`. La función nunca lanza: cualquier
+fallo de red, timeout o respuesta no-2xx se traduce en
 `{ success: false, error }` para que el modelo pueda recuperarse, igual que
 `executeInternalTool`. Límites duros: timeout de `8000 ms`
 (`EXTERNAL_API_TIMEOUT_MS`) y truncado de la respuesta a `100_000` bytes

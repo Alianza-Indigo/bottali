@@ -18,6 +18,7 @@ import type { CreateToolInput, BrandingInput, BehaviorInput, ModelsInput, Capabi
 import { assertValidToolTransition, assertValidVersionTransition, isValidToolTransition, type ToolStatus, type ToolVersionStatus } from "./state-machine";
 import { copyVersionConfig, getLatestVersionNumber, getToolById, getVersionById, loadVersionConfig } from "./repository";
 import { assertSlugAvailable, validateVersionForPublish } from "./validation-publish";
+import { assertToolExternalCredentialReferences } from "./external-credentials";
 
 async function insertDefaultVersionScaffold(tx: DbOrTx, toolVersionId: string, input: Pick<CreateToolInput, "name" | "shortName" | "description">) {
   await tx.insert(toolBranding).values({
@@ -137,6 +138,13 @@ export async function updateModels(toolVersionId: string, input: ModelsInput, ac
 
 export async function updateCapabilities(toolVersionId: string, input: CapabilitiesInput, actorId: string): Promise<void> {
   await assertVersionIsDraft(toolVersionId);
+  const version = await getVersionById(toolVersionId);
+  await assertToolExternalCredentialReferences(
+    version.toolId,
+    input.externalApiEndpoints
+      .map((endpoint) => endpoint.credentialId)
+      .filter((id): id is string => Boolean(id)),
+  );
   await db.update(toolCapabilities).set(input).where(eq(toolCapabilities.toolVersionId, toolVersionId));
   await recordAuditEvent({ actorId, action: "tool.update.capabilities", resourceType: "tool_version", resourceId: toolVersionId });
 }
