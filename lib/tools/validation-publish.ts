@@ -3,6 +3,7 @@ import { db } from "@/lib/db/client";
 import { evaluationRuns, evaluationSuites, legalDocuments, providers, tools } from "@/db/schema";
 import { loadVersionConfig, getVersionById, getToolById } from "./repository";
 import { ConflictError } from "@/lib/utils/errors";
+import { toolHasProviderCredential } from "./provider-credentials";
 
 export interface PublishValidationResult {
   valid: boolean;
@@ -48,7 +49,8 @@ export async function validateVersionForPublish(toolVersionId: string): Promise<
 
     if (config.models.providerId) {
       const providerRow = await db.select().from(providers).where(eq(providers.id, config.models.providerId)).limit(1);
-      if (!providerRow[0] || !providerRow[0].enabled) {
+      const hasToolCredential = await toolHasProviderCredential(tool.id, config.models.providerId);
+      if (!providerRow[0] || (!providerRow[0].enabled && !hasToolCredential)) {
         errors.push("El proveedor de IA seleccionado no está disponible o no está habilitado.");
       }
     }

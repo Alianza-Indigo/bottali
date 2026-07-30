@@ -155,7 +155,7 @@ export async function getAdminToolBuilderData(toolId: string, executor: Tx = db)
   const [tool, versions, modelProviders] = await Promise.all([
     getToolById(toolId, executor),
     executor.select().from(toolVersions).where(eq(toolVersions.toolId, toolId)),
-    executor.select().from(providers).where(eq(providers.enabled, true)),
+    executor.select().from(providers).where(eq(providers.kind, "llm")),
   ]);
   return { tool, versions, modelProviders };
 }

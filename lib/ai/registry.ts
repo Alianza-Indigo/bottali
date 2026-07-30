@@ -18,31 +18,39 @@ let moderationProvider: ModerationProvider | undefined;
 let sttProvider: SpeechToTextProvider | undefined;
 let ttsProvider: TextToSpeechProvider | undefined;
 
-export function getLLMProvider(providerKey?: string): LLMProvider {
+export interface LLMProviderCredentials {
+  apiKey: string;
+  baseUrl?: string | null;
+}
+
+export function getLLMProvider(providerKey?: string, credentials?: LLMProviderCredentials): LLMProvider {
   const env = getEnv();
   const defaultProviderKey = `llm:${env.LLM_PROVIDER}`;
   const resolvedKey = providerKey ?? defaultProviderKey;
-  const cached = llmProviders.get(resolvedKey);
+  const cached = credentials ? undefined : llmProviders.get(resolvedKey);
   if (cached) return cached;
 
   let provider: LLMProvider;
   if (resolvedKey === "llm:gemini") {
-    if (!env.GEMINI_API_KEY) throw new Error("Gemini requiere GEMINI_API_KEY.");
+    const apiKey = credentials?.apiKey ?? env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("Gemini requiere una clave API en la herramienta o GEMINI_API_KEY.");
     provider = new OpenAICompatibleLLMProvider({
-      apiKey: env.GEMINI_API_KEY,
+      apiKey,
       baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
       timeoutMs: 30000,
       maxRetries: 2,
       providerKey: "gemini",
     });
-  } else if (resolvedKey === defaultProviderKey && env.LLM_PROVIDER === "openai-compatible") {
-    if (!env.LLM_API_KEY) throw new Error("LLM_PROVIDER=openai-compatible requiere LLM_API_KEY.");
+  } else if (resolvedKey === "llm:openai-compatible") {
+    const apiKey = credentials?.apiKey ?? (env.LLM_PROVIDER === "openai-compatible" ? env.LLM_API_KEY : undefined);
+    const baseUrl = credentials?.baseUrl ?? env.LLM_API_BASE_URL;
+    if (!apiKey) throw new Error("El proveedor OpenAI-compatible requiere una clave API en la herramienta o LLM_API_KEY.");
     provider = new OpenAICompatibleLLMProvider({
-      apiKey: env.LLM_API_KEY,
-      baseUrl: env.LLM_API_BASE_URL,
+      apiKey,
+      baseUrl,
       timeoutMs: 30000,
       maxRetries: 2,
-      providerKey: env.LLM_PROVIDER,
+      providerKey: "openai-compatible",
     });
   } else if (resolvedKey === defaultProviderKey && env.LLM_PROVIDER === "fake") {
     provider = new FakeLLMProvider();
@@ -50,7 +58,7 @@ export function getLLMProvider(providerKey?: string): LLMProvider {
     throw new Error(`Proveedor LLM no configurado: ${resolvedKey}.`);
   }
 
-  llmProviders.set(resolvedKey, provider);
+  if (!credentials) llmProviders.set(resolvedKey, provider);
   return provider;
 }
 

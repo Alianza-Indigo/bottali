@@ -5,7 +5,7 @@ import { conversations, knowledgeBases, messages, notifications, providerModels,
 import type { FullVersionConfig } from "@/lib/tools/repository";
 import { canUserAccessTool } from "@/lib/tools/access";
 import { loadVersionConfig } from "@/lib/tools/repository";
-import { getLLMProvider, getModerationProvider } from "@/lib/ai/registry";
+import { getModerationProvider } from "@/lib/ai/registry";
 import { estimateCostCents } from "@/lib/ai/usage/cost";
 import type { GenerationMessage, GenerationResult, GenerationUsage, LLMProvider, ToolCall, ToolSpec } from "@/lib/ai/types";
 import { INTERNAL_TOOLS, getInternalTool, listToolSpecsForLLM } from "@/lib/ai/tools/registry";
@@ -29,6 +29,10 @@ import { attachFilesToMessage, persistGeneratedDocument } from "@/lib/files/serv
 import { recordAuditEvent } from "@/lib/audit/log";
 import { AppError, BudgetExceededError, ForbiddenError, NotFoundError, RateLimitError } from "@/lib/utils/errors";
 import { wrapToolResultForModel } from "./tool-result";
+import {
+  getToolLLMProvider,
+  toolHasProviderCredential,
+} from "@/lib/tools/provider-credentials";
 
 /** A document produced by generate_text_document during a turn, collected so
  * finalizeGeneration can persist it (§17/§36) once the assistant message it belongs to
@@ -100,7 +104,10 @@ async function resolveGenerationContext(conversationId: string, userId: string):
     .where(eq(providers.id, model.providerId))
     .limit(1);
   const provider = providerRows[0];
-  if (!provider?.enabled) {
+  const hasToolCredential = provider
+    ? await toolHasProviderCredential(tool.id, model.providerId)
+    : false;
+  if (!provider || (!provider.enabled && !hasToolCredential)) {
     throw new AppError("El proveedor configurado no está disponible.", "PROVIDER_UNAVAILABLE", 503);
   }
 
@@ -578,7 +585,7 @@ async function* generateReply(params: GenerateReplyParams): AsyncGenerator<Strea
   const toolSpecs = combinedToolSpecs.length > 0 ? combinedToolSpecs : undefined;
   const confirmationsRequired = config.safetyPolicies?.confirmationsRequired ?? [];
 
-  const provider = getLLMProvider(ctx.providerKey);
+  const provider = await getToolLLMProvider(tool.id, ctx.providerKey);
   const startedAt = Date.now();
 
   let fullText = "";
@@ -889,7 +896,7 @@ export async function* resumeAfterToolConfirmation(params: ResolveToolConfirmati
 
   const ctx = await resolveGenerationContext(confirmation.conversationId, params.userId);
   const { conversation, tool, config, model } = ctx;
-  const provider = getLLMProvider(ctx.providerKey);
+  const provider = await getToolLLMProvider(tool.id, ctx.providerKey);
   const context = { userId: params.userId, conversationId: conversation.id, toolId: tool.id };
   const call: ToolCall = { id: confirmation.toolCallId, name: confirmation.toolName, arguments: confirmation.argumentsJson };
 

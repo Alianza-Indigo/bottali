@@ -13,6 +13,7 @@ import { KnowledgeSection } from "./sections/KnowledgeSection";
 import { AccessSection } from "./sections/AccessSection";
 import { SafetySection } from "./sections/SafetySection";
 import { PwaSection } from "./sections/PwaSection";
+import { ApiCredentialsSection } from "./sections/ApiCredentialsSection";
 import { LifecyclePanel } from "./LifecyclePanel";
 import { getPublicationStatusTone, getVisibleToolStatus } from "@/lib/tools/presentation";
 import { AdminPageHeader, AdminPanel } from "@/components/admin/AdminPage";
@@ -23,7 +24,14 @@ export interface ToolBuilderProps {
   versionStatus: string;
   config: FullVersionConfig;
   versions: Array<{ id: string; versionNumber: number; status: string }>;
-  providers: Array<{ id: string; name: string; kind: string }>;
+  providers: Array<{ id: string; key: string; name: string; kind: string; enabled: boolean }>;
+  providerCredentials: Array<{
+    providerId: string;
+    keyHint: string;
+    baseUrl: string | null;
+    lastTestedAt: string | null;
+    lastTestStatus: string | null;
+  }>;
   knowledgeBase: { id: string; name: string; description: string | null; disabled: boolean } | null;
   knowledgeDocuments: Array<{ id: string; name: string; status: string; sizeBytes: number }>;
 }
@@ -33,6 +41,7 @@ const TABS = [
   { key: "behavior", label: "Comportamiento" },
   { key: "knowledge", label: "Conocimiento" },
   { key: "models", label: "Modelo" },
+  { key: "apis", label: "APIs" },
   { key: "capabilities", label: "Capacidades" },
   { key: "access", label: "Acceso" },
   { key: "safety", label: "Seguridad" },
@@ -48,6 +57,7 @@ export function ToolBuilder({
   config,
   versions,
   providers,
+  providerCredentials,
   knowledgeBase,
   knowledgeDocuments,
 }: ToolBuilderProps) {
@@ -85,6 +95,13 @@ export function ToolBuilder({
               />
             )}
             {tab === "models" && <ModelsSection toolId={tool.id} versionId={versionId} initial={config.models} providers={providers} />}
+            {tab === "apis" && (
+              <ApiCredentialsSection
+                toolId={tool.id}
+                providers={providers}
+                initialCredentials={providerCredentials}
+              />
+            )}
             {tab === "capabilities" && <CapabilitiesSection toolId={tool.id} versionId={versionId} initial={config.capabilities} />}
             {tab === "access" && <AccessSection toolId={tool.id} versionId={versionId} initial={config.accessRules} />}
             {tab === "safety" && <SafetySection toolId={tool.id} versionId={versionId} initial={config.safetyPolicies} />}

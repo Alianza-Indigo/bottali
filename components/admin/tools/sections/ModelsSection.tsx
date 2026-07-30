@@ -36,8 +36,11 @@ export function ModelsSection({
   // read-only reference data (available models per provider) — exactly the kind of request
   // QueryProvider (app/layout.tsx) exists to dedupe/cache instead of refetching per mount.
   const { data: models = [] } = useQuery({
-    queryKey: ["admin", "models"],
-    queryFn: () => apiFetch<{ models: ModelOption[] }>("/api/v1/admin/models").then((res) => res.models),
+    queryKey: ["admin", "models", toolId],
+    queryFn: () =>
+      apiFetch<{ models: ModelOption[] }>(`/api/v1/admin/models?toolId=${toolId}`).then(
+        (res) => res.models,
+      ),
   });
   const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const {

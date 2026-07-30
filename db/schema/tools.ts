@@ -153,6 +153,30 @@ export const toolModels = pgTable("tool_models", {
   storageLimitBytes: integer("storage_limit_bytes").notNull().default(104857600),
 });
 
+export const toolProviderCredentials = pgTable(
+  "tool_provider_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    toolId: uuid("tool_id")
+      .notNull()
+      .references(() => tools.id, { onDelete: "cascade" }),
+    providerId: uuid("provider_id")
+      .notNull()
+      .references(() => providers.id, { onDelete: "cascade" }),
+    apiKeyEncrypted: text("api_key_encrypted").notNull(),
+    keyHint: varchar("key_hint", { length: 16 }).notNull(),
+    baseUrl: text("base_url"),
+    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+    lastTestStatus: varchar("last_test_status", { length: 16 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("tool_provider_credentials_tool_provider_idx").on(table.toolId, table.providerId),
+    index("tool_provider_credentials_tool_idx").on(table.toolId),
+  ],
+);
+
 export const toolCapabilities = pgTable("tool_capabilities", {
   id: uuid("id").primaryKey().defaultRandom(),
   toolVersionId: uuid("tool_version_id")

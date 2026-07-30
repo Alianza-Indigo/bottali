@@ -56,6 +56,23 @@ export async function syncProvidersFromEnv(db: Database): Promise<void> {
         },
       ],
     },
+    ...(env.LLM_PROVIDER === "openai-compatible"
+      ? []
+      : [
+          {
+            kind: "llm" as const,
+            key: "openai-compatible",
+            name: "OpenAI compatible",
+            enabled: false,
+            models: [
+              {
+                modelKey: "gpt-4o-mini",
+                displayName: "GPT-4o mini",
+                contextWindow: 128_000,
+              },
+            ],
+          },
+        ]),
     {
       kind: "embedding",
       key: env.EMBEDDING_PROVIDER,

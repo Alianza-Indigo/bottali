@@ -6,6 +6,7 @@ import { requireCurrentUser } from "@/lib/auth/current-user";
 import { ToolBuilder } from "@/components/admin/tools/ToolBuilder";
 import { db } from "@/lib/db/client";
 import { knowledgeBases, knowledgeDocuments } from "@/db/schema";
+import { listToolProviderCredentials } from "@/lib/tools/provider-credentials";
 
 export default async function AdminToolDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -14,6 +15,7 @@ export default async function AdminToolDetailPage({ params }: { params: Promise<
   const builderData = await getAdminToolBuilderData(id).catch(() => null);
   if (!builderData) notFound();
   const { tool, versions, modelProviders } = builderData;
+  const providerCredentials = await listToolProviderCredentials(id);
 
   const draftVersionId = await ensureEditableDraftVersion(id, user.id);
   const config = await loadVersionConfig(draftVersionId);
@@ -45,7 +47,20 @@ export default async function AdminToolDetailPage({ params }: { params: Promise<
       versionStatus={activeVersion.status}
       config={config}
       versions={versions.map((v) => ({ id: v.id, versionNumber: v.versionNumber, status: v.status }))}
-      providers={modelProviders.map((p) => ({ id: p.id, name: p.name, kind: p.kind }))}
+      providers={modelProviders.map((p) => ({
+        id: p.id,
+        key: p.key,
+        name: p.name,
+        kind: p.kind,
+        enabled: p.enabled,
+      }))}
+      providerCredentials={providerCredentials.map((credential) => ({
+        providerId: credential.providerId,
+        keyHint: credential.keyHint,
+        baseUrl: credential.baseUrl,
+        lastTestedAt: credential.lastTestedAt?.toISOString() ?? null,
+        lastTestStatus: credential.lastTestStatus,
+      }))}
       knowledgeBase={
         knowledgeBase
           ? {

@@ -78,6 +78,13 @@
       "when": 1785164648297,
       "tag": "0010_omniscient_madripoor",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785427332512,
+      "tag": "0011_hard_pestilence",
+      "breakpoints": true
     }
   ]
 }
